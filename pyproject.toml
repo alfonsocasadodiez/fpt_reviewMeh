@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reviewmeh"
+description = "Frame-accurate review of ShotGrid Versions: drawings, threaded notes, a live room, publishing back as Notes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dynamic = ["version"]
+keywords = ["shotgrid", "flow-production-tracking", "review", "animation", "vfx"]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2",
+  "itsdangerous>=2.1",
+  "pillow>=10",
+  "psutil>=5.9",
+  "shotgun_api3>=3.5",
+]
+
+[project.optional-dependencies]
+pdf = ["weasyprint>=60"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+reviewmeh = "reviewmeh.cli:main"
+
+[tool.hatch.version]
+path = "src/reviewmeh/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reviewmeh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

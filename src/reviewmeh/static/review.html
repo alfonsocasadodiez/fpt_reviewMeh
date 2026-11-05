@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/static/review.css">
+  <script src="/config.js"></script>
+</head>
+<body>
+<header id="top">
+  <a href="/" class="brand" title="All reviews"><img src="/logo.svg" alt="{{APP_NAME}}"></a>
+  <div class="title">
+    <a id="reviewName" target="_blank" rel="noopener">Loading…</a>
+    <div id="reviewMeta" class="muted"></div>
+  </div>
+  <div class="spacer"></div>
+  <div id="followBanner" hidden></div>
+  <div id="presence"></div>
+  <button id="btnTour" class="icon"><svg viewBox="0 0 16 16" width="16" height="16"><circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.1 6.2a2 2 0 113 1.7c-.7.4-1.1.8-1.1 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.7" r=".9" fill="currentColor"/></svg></button>
+  <button id="btnShare">Share</button>
+  <button id="btnPointers" title="Show other people's pointers" hidden>Pointers</button>
+  <button id="btnPresent">Present</button>
+  <button id="btnPublish" class="primary">Publish to SG</button>
+  <div id="userChip"></div>
+</header>
+
+<main>
+  <div id="leftGrip" class="grip"></div>
+  <div id="rightGrip" class="grip"></div>
+  <aside id="sidebar">
+    <div class="panel-head">
+      <span>Versions</span>
+      <span class="spacer"></span>
+      <button id="sortChip" title="Reverse the order" hidden></button>
+      <button id="btnSort" class="icon" title="Sort versions">⇅</button>
+      <button id="btnAdd" class="icon" title="Add versions">+</button>
+    </div>
+    <div id="sortPicker" hidden>
+      <div class="row"><input type="search" id="sortSearch" placeholder="Search fields"><button id="btnSortClose" title="Close">×</button></div>
+      <div id="sortFields" class="ftree"></div>
+    </div>
+    <ul id="itemList"></ul>
+  </aside>
+
+  <section id="viewer">
+    <div id="itemHeader"></div>
+    <div id="stage">
+      <div id="frameA" class="frame"><video id="vA" class="on" playsinline preload="auto" controlslist="nodownload" disablepictureinpicture></video><video id="vB" playsinline preload="auto" controlslist="nodownload" disablepictureinpicture></video></div>
+      <div id="frameC" class="frame" hidden><video id="vC" playsinline preload="auto" muted></video></div>
+      <canvas id="canvas"></canvas>
+      <div id="wipe" hidden><i></i></div>
+      <div id="cmpBar" hidden></div>
+      <div id="pointers"></div>
+      <template id="pointerTpl"><div class="ptr"><svg viewBox="0 0 16 16" width="20" height="20"><path d="M2.5 1.5l11 6.3-5 1.1-2.6 4.6z" fill="var(--pc)" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg><span></span></div></template>
+      <textarea id="textInput" rows="1" hidden></textarea>
+      <div id="stageMsg" hidden></div>
+    </div>
+
+    <div id="toolbar">
+      <div class="group" id="tools"></div>
+      <div class="sep"></div>
+      <div class="group" id="colors"></div>
+      <input type="color" id="colorInput" class="vh" tabindex="-1">
+      <div class="sep"></div>
+      <div class="group sliders" id="sizes">
+        <span class="dotbox"><i id="brushDot"></i></span>
+        <input type="range" id="sizeRange" min="0.002" max="0.03" step="0.0005">
+        <svg class="opic" viewBox="0 0 16 16" width="14" height="14"><path d="M8 2l4 5.5a5 5 0 11-8 0z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 6v8a5 5 0 01-4-6.5z" fill="currentColor"/></svg>
+        <input type="range" id="opacityRange" min="0.1" max="1" step="0.05">
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <button id="btnUndo" class="icon" title="Undo (Ctrl+Z)"></button>
+        <button id="btnRedo" class="icon" title="Redo (Ctrl+Shift+Z)"></button>
+        <button id="btnClear" class="icon" title="Clear unposted drawing on this frame"></button>
+      </div>
+      <div class="spacer"></div>
+      <div class="group">
+        <button id="btnOnion" class="icon" title="Onion skin (U)"></button>
+        <input id="onionN" type="number" min="1" max="48" title="Onion skin frames" hidden>
+        <button id="btnHold" class="icon" title="Hold until next drawing (G)"></button>
+        <button id="btnDrawings" class="icon active" title="Show drawings (H)"></button>
+        <button id="btnZoom" class="zoom" title="Zoom">100%</button>
+      </div>
+    </div>
+
+    <div id="timeline">
+      <div id="cutFilter" hidden></div>
+      <div id="comp"></div>
+      <div id="track">
+        <div id="segs"></div>
+        <div id="ranges"></div>
+        <div id="io" hidden><i data-h="a"></i><i data-h="b"></i></div>
+        <div id="markers"></div>
+        <div id="playhead"></div>
+        <div id="hoverTip" hidden></div>
+      </div>
+      <div id="tlbar" hidden><div id="tlthumb"></div></div>
+    </div>
+
+    <div id="transport">
+      <div class="group">
+        <button class="icon" id="btnFirst" title="First frame (Home)"></button>
+        <button class="icon" id="btnPrevNote" title="Previous note (↑)"></button>
+        <button class="icon" id="btnBack" title="Previous frame (←)"></button>
+        <button class="icon play" id="btnPlay" title="Play / pause (Space)"></button>
+        <button class="icon" id="btnFwd" title="Next frame (→)"></button>
+        <button class="icon" id="btnNextNote" title="Next note (↓)"></button>
+        <button class="icon" id="btnLast" title="Last frame (End)"></button>
+      </div>
+      <div class="group" id="ioBtns">
+        <button class="icon" id="btnIn"></button>
+        <button class="icon" id="btnOut"></button>
+        <button class="icon" id="btnClearIO" disabled></button>
+      </div>
+      <div class="group framebox">
+        <input id="frameInput" type="text" title="Frame">
+        <button id="tc" class="ghost mono"></button>
+      </div>
+      <div class="spacer"></div>
+      <div class="group">
+        <select id="speed" title="Speed">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+        </select>
+        <button class="icon active" id="btnLoop" title="Loop"></button>
+        <button class="icon" id="btnMute" title="Mute (M)"></button>
+        <input type="range" id="volume" min="0" max="1" step="0.05" value="1" title="Volume">
+        <button class="icon" id="btnExport" title="Download frame"></button>
+        <button class="icon" id="btnFull" title="Fullscreen (F)"></button>
+      </div>
+    </div>
+  </section>
+
+  <aside id="notesPanel">
+    <div class="panel-head">
+      <div class="seg" id="rtabs"><button data-rtab="notes">Notes</button><button data-rtab="shot" id="rtabShot">Shot notes</button><button data-rtab="details" id="rtabDetails">Details</button></div>
+      <button id="btnFields" class="icon" hidden>+</button>
+      <select id="noteFilter">
+        <option value="all">All</option>
+        <option value="open">Unresolved</option>
+        <option value="mine">Mine</option>
+        <option value="pending">Unpublished</option>
+      </select>
+    </div>
+    <div id="noteList"></div>
+    <div id="shotList" hidden></div>
+    <div id="detailsPane" hidden>
+      <div id="fieldPicker" hidden>
+        <div class="row"><input type="search" id="fieldSearch" placeholder="Search fields"><button id="btnFieldReset">Reset</button></div>
+        <div id="fieldList" class="ftree"></div>
+      </div>
+      <div id="detailList"></div>
+    </div>
+    <div id="composer">
+      <div id="draftChips"></div>
+      <div id="fileChips"></div>
+      <textarea id="noteText" rows="3" placeholder="Comment"></textarea>
+      <div class="composer-row">
+        <button id="btnAttach" class="icon" hidden></button><input type="file" id="fileInput" multiple hidden>
+        <span id="frameChip" class="chip"></span>
+        <select id="holdSelect" title="Frames the note covers"></select>
+        <div class="spacer"></div>
+        <button id="btnCancelEdit" hidden>Cancel</button>
+        <button id="btnPost" class="primary">Post</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div id="menu" hidden></div>
+<div id="tip" hidden></div>
+<div id="modalBack" hidden><div id="modal"></div></div>
+<div id="toasts"></div>
+<script src="/static/signin.js"></script>
+<script src="/static/draw.js"></script>
+<script src="/static/review.js"></script>
+<script src="/static/tour.js"></script>
+</body>
+</html>

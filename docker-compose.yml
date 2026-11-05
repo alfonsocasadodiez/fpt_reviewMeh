@@ -1,0 +1,12 @@
+services:
+  reviewmeh:
+    image: alfonsocasadodiez/reviewmeh:latest
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    env_file: .env   # Copy .env.example. Any REVIEWMEH_* setting can go there
+    volumes:
+      - reviewmeh-data:/data   # Database, media, backups and generated secrets
+
+volumes:
+  reviewmeh-data:

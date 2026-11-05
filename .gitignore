@@ -1,0 +1,12 @@
+reviewmeh.toml
+.env
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+logo.icon/
+.DS_Store

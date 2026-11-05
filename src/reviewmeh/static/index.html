@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{APP_NAME}}</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/static/review.css">
+  <script src="/config.js"></script>
+  <style>
+    body { overflow: auto; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; width: 100%; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; background: var(--panel2); }
+    tr:hover td { background: var(--panel2); }
+    td a { color: var(--text); text-decoration: none; font-weight: 600; }
+    td a:hover { color: var(--accent2); }
+    .tabs { display: flex; gap: 6px; margin: 0 0 14px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 30px; text-align: center; color: var(--muted); }
+    .signin { max-width: 360px; margin: 12vh auto 0; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+    .signin img { height: 56px; }
+    .signin button { padding: 10px 22px; font-size: 15px; }
+    #userChip { cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+    #userChip img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+    .access th:not(:first-child), .access td:not(:first-child) { text-align: center; }
+    .access .muted { margin-left: 6px; font-weight: 400; }
+    .credit { margin-top: auto; flex-shrink: 0; padding: 16px 24px; text-align: center; font-size: 12px; color: var(--muted); }
+    .credit a { color: inherit; }
+    .credit a:hover { color: var(--accent2); }
+    .transcode label { margin-right: 18px; }
+    .transcode p { margin: 12px 0 0; }
+    td.acts { white-space: nowrap; }
+    #tcStatus { margin-top: 14px; color: var(--text); font-size: 13px; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+    .tile h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .tile .big { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
+    .tile .big small { font-size: 14px; font-weight: 400; color: var(--muted); }
+    .tile .sub { margin-top: 7px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .tile .warnline { color: var(--text); font-weight: 600; }
+    .meter { height: 6px; border-radius: 4px; background: var(--panel2); overflow: hidden; }
+    .meter i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+    .tasks td { font-variant-numeric: tabular-nums; }
+    .tasks .meter { min-width: 110px; }
+    .tasks td:first-child { font-weight: 600; word-break: break-all; }
+    #tcStatus h4 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+    #tcStatus .idle { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; color: var(--muted); }
+    #tcStatus .foot { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+<header id="top">
+  <a href="/" class="brand"><img src="/logo.svg" alt="{{APP_NAME}}"></a>
+  <div class="title"><div id="reviewName">Reviews</div></div>
+  <div class="spacer"></div>
+  <div id="userChip"></div>
+</header>
+<div class="wrap">
+  <div class="signin" id="signin" hidden>
+    <img src="/logo.svg" alt="{{APP_NAME}}">
+    <button class="primary" id="btnSignIn">Sign in with ShotGrid</button>
+  </div>
+  <div class="tabs" id="tabs">
+    <input type="search" id="filter" placeholder="Search" style="flex:1">
+    <button id="tabActive" class="active">Active</button>
+    <button id="tabArchived">Archived</button>
+    <button id="tabAccess" hidden>Access</button>
+    <button id="tabTranscode" hidden>Transcoding</button>
+  </div>
+  <div id="content"></div>
+</div>
+<footer class="credit">Made with ♥ by <a href="https://www.linkedin.com/in/alfonsocasadodiez" target="_blank" rel="noopener noreferrer">Alfonso Casado Diez</a></footer>
+<script src="/static/signin.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let archived = 0, rows = [];
+const ago = t => { if (!t) return ''; const s = Date.now()/1000 - t; if (s < 3600) return `${Math.max(1, Math.floor(s/60))}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`; return new Date(t*1000).toLocaleDateString(); };
+
+let me = null, access = false, admin = false;
+async function load() {
+  const who = await (await fetch('/api/me')).json();
+  me = who.user;
+  admin = !!who.admin;
+  $('#tabAccess').hidden = $('#tabTranscode').hidden = !admin;
+  $('#userChip').innerHTML = me ? `${me.id ? `<img src="/api/avatar/${me.id}" alt="" onerror="this.remove()">` : ''}${esc(me.name)}` : '';
+  const r = me?.v ? await fetch(`/api/reviews?archived=${archived}`) : null;
+  $('#signin').hidden = !!me?.v;
+  $('#tabs').hidden = !r?.ok;
+  $('#content').hidden = !me?.v;
+  if (me?.v && !r.ok) { $('#content').innerHTML = `<div class="card">${esc((await r.json()).detail)}</div>`; return; }
+  if (!r?.ok) return;
+  if (access) return access === 'transcode' ? drawTranscode() : drawAccess();
+  rows = await r.json();
+  draw();
+}
+$('#btnSignIn').onclick = async () => {
+  const b = $('#btnSignIn');
+  b.disabled = true; b.textContent = 'Waiting for ShotGrid…';
+  try { await signInWithShotGrid(); await load(); }
+  catch (e) { alert(e.message); }
+  b.disabled = false; b.textContent = 'Sign in with ShotGrid';
+};
+$('#userChip').onclick = async () => {
+  if (!me || !confirm(`Signed in as ${me.name}. Sign out?`)) return;
+  await fetch('/api/logout', { method: 'POST' });
+  load();
+};
+function draw() {
+  const q = $('#filter').value.toLowerCase();
+  const list = rows.filter(r => !q || `${r.name} ${r.project_name} ${r.created_by_name}`.toLowerCase().includes(q));
+  $('#content').innerHTML = list.length ? `<table><tr><th>Review</th><th>Project</th><th>Versions</th><th>Notes</th><th>Unpublished</th><th>Created by</th><th>Last activity</th><th></th></tr>
+    ${list.map(r => `<tr><td><a href="/r/${r.token}">${esc(r.name)}</a></td><td>${esc(r.project_name)}</td><td>${r.item_count}</td>
+      <td>${r.note_count}</td><td>${r.pending_count ? `<span class="pill pending">${r.pending_count}</span>` : ''}</td>
+      <td>${esc(r.created_by_name)}</td><td class="muted">${ago(r.last_activity || r.created_at)}</td>
+      <td class="acts">${admin ? `<button data-clear="${r.token}" data-name="${esc(r.name)}" title="Delete this review's processed movies. They're made again when next opened.">Clear movies</button> ` : ''}<button data-token="${r.token}">${archived ? 'Restore' : 'Archive'}</button></td></tr>`).join('')}</table>`
+    : '<div class="card">No reviews</div>';
+}
+const CLEAR_NOTE = 'Notes and drawings stay. Each movie is made again from ShotGrid, with the current Transcoding settings, when someone opens it.';
+async function postJSON(url) {
+  const r = await fetch(url, { method: 'POST' }), j = await r.json();
+  if (!r.ok) throw new Error(j.detail);
+  return j;
+}
+$('#content').addEventListener('click', async e => {
+  const one = e.target.closest('button[data-clear]');
+  if (one) {
+    if (!confirm(`Clear the processed movies of ${one.dataset.name}?\n\n${CLEAR_NOTE}`)) return;
+    try { const r = await postJSON(`/api/r/${one.dataset.clear}/clear-movies`); one.textContent = `Cleared ${r.cleared}`; one.disabled = true; } catch (err) { alert(err.message); }
+    return;
+  }
+  if (e.target.closest('#tcClear')) {
+    if (!confirm(`Clear every processed movie, in all reviews?\n\n${CLEAR_NOTE}`)) return;
+    try { await postJSON('/api/transcode/clear'); drawTranscode(); } catch (err) { alert(err.message); }
+    return;
+  }
+  const t = e.target.closest('button[data-token]')?.dataset.token;
+  if (!t) return;
+  await fetch(`/api/r/${t}/archive?archived=${archived ? 0 : 1}`, { method: 'POST' });
+  load();
+});
+$('#filter').addEventListener('input', draw);
+const tab = (el, arch, acc) => { archived = arch; access = acc; for (const b of ['#tabActive', '#tabArchived', '#tabAccess', '#tabTranscode']) $(b).classList.toggle('active', $(b) === el); $('#filter').hidden = !!acc; load(); };
+$('#tabActive').onclick = () => tab($('#tabActive'), 0, false);
+$('#tabArchived').onclick = () => tab($('#tabArchived'), 1, false);
+$('#tabAccess').onclick = () => tab($('#tabAccess'), 0, 'access');
+$('#tabTranscode').onclick = () => tab($('#tabTranscode'), 0, 'transcode');
+// What each ShotGrid permission group can do. Guests are set per link, in Share.
+async function drawAccess() {
+  const a = await (await fetch('/api/access')).json();
+  $('#content').innerHTML = `<table class="access"><tr><th>Group</th>${a.rights.map(r => `<th>${esc(r.name)}</th>`).join('')}</tr>
+    ${a.groups.map(g => `<tr data-group="${esc(g.name)}"><td><b>${esc(g.name)}</b><span class="muted">${g.users}</span></td>
+      ${a.rights.map(r => `<td><input type="checkbox" data-r="${r.key}" ${g.rights.includes(r.key) ? 'checked' : ''} ${g.locked ? 'disabled' : ''}></td>`).join('')}</tr>`).join('')}</table>`;
+}
+// The movies ReviewMeh plays. New ones use this; the ones already made stay as they are until reprocessed.
+async function drawTranscode() {
+  const t = await (await fetch('/api/transcode')).json();
+  const quality = t.qualities.some(q => q.crf === t.crf) ? t.qualities : [...t.qualities, { crf: t.crf, name: 'Custom' }];
+  const widths = t.widths.includes(t.max_width) ? t.widths : [...t.widths, t.max_width].sort((a, b) => a - b);
+  $('#content').innerHTML = `<div class="card transcode">
+    <label>Quality <select id="tcCrf">${quality.map(q => `<option value="${q.crf}"${q.crf === t.crf ? ' selected' : ''}>${esc(q.name)} (CRF ${q.crf})</option>`).join('')}</select></label>
+    <label>Maximum width <select id="tcWidth">${widths.map(w => `<option value="${w}"${w === t.max_width ? ' selected' : ''}>${w} px</option>`).join('')}</select></label>
+    <span class="muted" id="tcSaved"></span>
+    <p class="muted">Better quality and larger sizes look sharper but take longer to process and use more disk and bandwidth. Movies smaller than the maximum width aren't enlarged.</p>
+    <p class="muted">Movies already processed keep their quality until they're made again. To do that, right-click versions in a review and choose Reprocess, use Clear movies on a review in the Active list, or clear them all here.</p>
+    <p><button id="tcClear"${t.stored.movies ? '' : ' disabled'}>Clear all processed movies</button> <span class="muted" id="tcStored">${t.stored.movies} ${t.stored.movies === 1 ? 'movie' : 'movies'}, ${t.stored.bytes >= 2 ** 30 ? `${(t.stored.bytes / 2 ** 30).toFixed(1)} GB` : `${Math.round(t.stored.bytes / 2 ** 20)} MB`}</span></p>
+  </div><div id="tcStatus" aria-live="off"></div>`;
+  pollStatus();
+}
+// Live while this tab is open and visible
+let statusRun = 0;
+async function pollStatus() {
+  const run = ++statusRun;
+  while (run === statusRun && access === 'transcode' && $('#tcStatus')) {
+    if (!document.hidden) {
+      try {
+        const r = await fetch('/api/transcode/status');
+        if (run !== statusRun || !$('#tcStatus')) return;
+        if (!r.ok) { $('#tcStatus').innerHTML = `<div class="idle">${esc((await r.json()).detail)}</div>`; return; }
+        drawStatus(await r.json());
+      } catch (e) { if ($('#tcStatus')) $('#tcStatus').innerHTML = '<div class="idle">Waiting for the server…</div>'; }
+    }
+    await new Promise(done => setTimeout(done, 2000));
+  }
+}
+const bytes = n => (n >= 2 ** 30 ? `${(n / 2 ** 30).toFixed(1)} GB` : `${Math.round(n / 2 ** 20)} MB`);
+const span = s => { s = Math.round(s); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`; };
+const meter = (pct, label) => `<div class="meter" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${Math.min(100, Math.max(0, pct))}%"></i></div>`;
+const STEP = { downloading: 'Downloading from ShotGrid', transcoding: 'Transcoding' };
+function drawStatus(s) {
+  const tile = (title, big, pct, subs) => `<div class="tile"><h3>${title}</h3><div class="big">${big}</div>${pct == null ? '' : meter(pct, title)}${subs.map(x => `<div class="sub">${x}</div>`).join('')}</div>`;
+  const tiles = [
+    tile('CPU', `${Math.round(s.cpu.percent)}%`, s.cpu.percent, [`${s.cpu.cores} cores · load ${s.cpu.load.toFixed(1)}`, `ReviewMeh and ffmpeg: ${s.cpu.own_cores.toFixed(1)} cores`]),
+    tile('Memory', `${Math.round(s.memory.percent)}%`, s.memory.percent, [`${bytes(s.memory.used)} of ${bytes(s.memory.total)}`, `ReviewMeh and ffmpeg: ${bytes(s.memory.own)}`]),
+    tile('Disk', `${Math.round(s.disk.percent)}%`, s.disk.percent, [`${bytes(s.disk.free)} free of ${bytes(s.disk.total)}`, `Processed movies: ${bytes(s.disk.movies.bytes)}`,
+      ...(s.disk.percent >= 90 ? ['<span class="warnline">⚠ Nearly full</span>'] : [])]),
+    tile('Transcoding', `${s.running.length}<small> of ${s.workers} at once</small>`, null, [`${s.waiting_count} waiting · ${s.ready} ready`,
+      `${s.failed_count ? `<span class="warnline">⚠ ${s.failed_count} failed</span>` : '0 failed'} · ${s.people} ${s.people === 1 ? 'person' : 'people'} in ${s.open_reviews} ${s.open_reviews === 1 ? 'review' : 'reviews'}`]),
+  ].join('');
+  const rows = s.running.map(t => `<tr><td>${esc(t.code || `Version ${t.version_id}`)}</td><td>${STEP[t.status] || esc(t.status)}</td>
+    <td>${t.status === 'transcoding' ? `${meter(t.progress * 100, 'Progress')}` : ''}</td><td>${t.status === 'transcoding' ? `${Math.round(t.progress * 100)}%` : ''}</td>
+    <td>${span(t.elapsed)}</td><td>${t.left == null ? '' : span(t.left)}</td><td>${t.cores == null ? '' : `${t.cores.toFixed(1)} cores`}</td></tr>`).join('');
+  const work = rows ? `<table class="tasks"><tr><th>Now</th><th>Step</th><th colspan="2">Progress</th><th>Time</th><th>Left</th><th>CPU</th></tr>${rows}</table>`
+    : '<div class="idle">Nothing is being transcoded right now.</div>';
+  const waiting = s.waiting_count ? `<h4>Waiting (${s.waiting_count})</h4><div class="idle">${s.waiting.map(w => esc(w.code || `Version ${w.version_id}`)).join(', ')}${s.waiting_count > s.waiting.length ? `, and ${s.waiting_count - s.waiting.length} more` : ''}</div>` : '';
+  const list = (title, items) => (items.length ? `<h4>${title}</h4><table class="tasks">${items.join('')}</table>` : '');
+  const failed = list('Latest failures', s.failed.map(f => `<tr><td>${esc(f.code || '')}</td><td>${esc(f.error || '')}</td><td class="muted">${ago(f.at)}</td></tr>`));
+  const finished = list('Latest finished', s.finished.map(f => `<tr><td>${esc(f.code || '')}</td><td class="muted">${ago(f.at)}</td></tr>`));
+  const foot = s.in_container ? '<div class="foot">CPU, memory and disk are as this container sees them: on Docker Desktop that\'s its virtual machine, not your whole computer.</div>' : '';
+  $('#tcStatus').innerHTML = `<div class="tiles">${tiles}</div>${work}${waiting}${failed}${finished}${foot}`;
+}
+$('#content').addEventListener('change', async e => {
+  if (e.target.closest('.transcode')) {
+    const r = await fetch('/api/transcode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crf: +$('#tcCrf').value, max_width: +$('#tcWidth').value }) });
+    if (!r.ok) { alert((await r.json()).detail); return drawTranscode(); }
+    $('#tcSaved').textContent = 'Saved';
+    return;
+  }
+  const row = e.target.closest('tr[data-group]');
+  if (!row) return;
+  const rights = [...row.querySelectorAll('input:checked')].map(c => c.dataset.r);
+  const r = await fetch('/api/access', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group: row.dataset.group, rights }) });
+  if (!r.ok) { alert((await r.json()).detail); drawAccess(); }
+});
+load();
+</script>
+</body>
+</html>

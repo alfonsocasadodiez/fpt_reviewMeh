@@ -1,0 +1,77 @@
+# ReviewMeh configuration. Every value below the first two sections is optional and shows its default.
+# Any setting can come from the environment instead, as REVIEWMEH_<SECTION>_<KEY>. Keep this file private.
+
+[shotgrid]
+url = "https://yoursite.shotgrid.autodesk.com"
+script_name = "reviewmeh"
+script_key = ""
+
+[server]
+public_url = "https://review.example.com"   # The address people use; links are built from it
+secret = "__SECRET__"                       # Signs sign-in cookies. Changing it signs everyone out
+host = "127.0.0.1"
+port = 8086
+forwarded_allow_ips = "127.0.0.1"           # Your reverse proxy's address
+
+[hooks]
+ami_key = "__AMI_KEY__"                     # Part of the Action Menu Item addresses (`reviewmeh setup-amis`)
+webhook_secret = "__WEBHOOK_SECRET__"       # Paste as the Secret Token of the ShotGrid webhook pointed at /hooks/shotgrid
+trust_ami_user = false                      # Read the warning in docs/security.md before turning this on
+
+[storage]
+data_dir = "data"
+# db = "data/reviewmeh.db"                  # Local disk only: network shares break SQLite locking
+# media_root = "/mnt/nas/reviewmeh"         # Proxies, attachments, exports. A NAS is fine
+# backup_dir = "/mnt/nas/reviewmeh-backups"
+backup_keep = 30
+cache_days = 15                             # Delete proxies unused for this long; they're rebuilt from ShotGrid when needed. 0: keep them
+
+[branding]
+app_name = "ReviewMeh"
+# logo = "/path/to/logo.svg"
+# favicon = "/path/to/favicon.svg"          # Browser tab icon. Default: the logo above, if set
+accent = "#0796d4"
+accent_hover = "#0aa6eb"
+
+[media]
+# Where these two start. Admins can change them on the main page, in Transcoding
+proxy_max_width = 1920
+proxy_crf = 18                              # x264 quality: lower is better and bigger
+ingest_workers = 4
+render_workers = 8                          # Frames rendered side by side for exports and publishing
+publish_versions = 4                        # Versions published side by side
+font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+[access]
+admin_group = ["Admin"]                     # Always have every right, and can edit the rest on the dashboard's Access tab
+share_default_days = 7
+share_max_days = 30
+max_upload_mb = 500
+max_guest_upload_mb = 50
+# First-run rights per ShotGrid permission group, by name. Custom groups show up on the Access tab with no access until given some.
+# Rights: view, open (dashboard and studio links), comment, download, versions, status, publish, add, present, share
+[access.groups]
+Manager = ["view", "open", "comment", "download", "versions", "status", "publish", "add", "present", "share"]
+Artist = ["view", "open", "comment", "download", "versions", "present"]
+
+[schema]
+task_order = "sg_sort_order"                # Task: pipeline order, for the rows above the timeline
+cut_order = "sg_cut_order"                  # Shot: position in the cut
+cut_duration = "sg_cut_duration"            # Shot: length, used until its movie is loaded
+omit_status = ["omt"]                       # Shots with these statuses are left out of cuts
+note_status = "opn"                         # Status of new Notes, if your Notes have it. Empty: the site's default
+# What groups shots into a cut. Each project uses the first of these its shots are linked to, found in your site's schema,
+# so a series and a film can share a site. If you use scenes rather than sequences: ["scene"], or ["episode", "scene"] for
+# episodes made of scenes. Scenes are never assumed. ["off"] for no Mini-cut or cut view.
+cut_by = ["episode", "sequence"]
+# cut_label = "Reel"                        # Name shown for it. Default: the entity's name
+# Only for something cut_by can't find, such as a custom entity. These replace cut_by for the whole site:
+# cut_parent_type = "CustomEntity01"
+# cut_parent_field = "sg_reel"
+# A Note list field for note types, and its choices, to offer them when publishing:
+# note_type = "sg_note_type"
+# note_types = ["Internal", "Client"]
+
+# Status colours come from ShotGrid. To override some:
+# [schema.status_colors]
+# rev = "#c061fd"

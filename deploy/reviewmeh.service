@@ -1,0 +1,17 @@
+# Example systemd unit. Assumes a `reviewmeh` user, a virtualenv in /opt/reviewmeh/.venv and the config in /etc/reviewmeh.
+[Unit]
+Description=ReviewMeh review server
+After=network.target remote-fs.target
+
+[Service]
+Type=simple
+User=reviewmeh
+WorkingDirectory=/var/lib/reviewmeh
+Environment=REVIEWMEH_CONFIG=/etc/reviewmeh/reviewmeh.toml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/reviewmeh/.venv/bin/reviewmeh serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
