@@ -30,6 +30,7 @@ const HOLDS = [[0, '1 frame'], [2, '3 frames'], [5, '6 frames'], [11, '12 frames
 const ONION = ['#ff3b30', '#34c759'];  // frames before, frames after
 const modes = () => [['one', 'Version'], ['mini', 'Mini-cut'], ['cut', 'Cut']];
 const CMP_MODES = [['side', 'Side'], ['wipe', 'Wipe'], ['blend', 'Blend'], ['diff', 'Diff']];
+const BACKGROUNDS = [['black', 'Black'], ['grey18', '18% gray'], ['grey50', '50% gray'], ['white', 'White'], ['checker', 'Checkerboard'], ['checker-dark', 'Dark checkerboard'], ['crosshatch', 'Crosshatch']];
 
 const svg = p => `<svg viewBox="0 0 16 16" width="16" height="16">${p}</svg>`;
 const ICONS = {
@@ -67,6 +68,7 @@ const ICONS = {
   check: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   clip: '<path d="M13.5 7.3l-5.6 5.6a3.2 3.2 0 01-4.6-4.6l5.9-5.9a2.1 2.1 0 013 3l-5.7 5.7a1 1 0 01-1.5-1.5l5.2-5.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
   rotate: '<path d="M13 8a5 5 0 11-1.5-3.5M12.5 1.5v3.2H9.3" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+  background: '<rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3 3h5v5H3zM8 8h5v5H8z" fill="currentColor"/>',
   markIn: '<path d="M7 2.5H4v11h3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10.5" cy="8" r="1.8" fill="currentColor"/>',
   markOut: '<path d="M9 2.5h3v11H9" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="5.5" cy="8" r="1.8" fill="currentColor"/>',
   clearIO: '<path d="M4.5 2.5H2.5v11h2M11.5 2.5h2v11h-2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.5"/>',
@@ -78,7 +80,7 @@ const TOOLS = [['none', 'Select (V)', 'v'], ['brush', 'Brush (B)', 'b'], ['pen',
   ['rect', 'Rectangle (R)', 'r'], ['ellipse', 'Ellipse (C)', 'c'], ['text', 'Text (T)', 't'], ['eraser', 'Eraser (E)', 'e']];
 for (const [id, k] of [['btnFirst', 'first'], ['btnLast', 'last'], ['btnBack', 'back'], ['btnFwd', 'fwd'], ['btnPrevNote', 'prevNote'],
   ['btnNextNote', 'nextNote'], ['btnPlay', 'play'], ['btnLoop', 'loop'], ['btnMute', 'sound'], ['btnExport', 'export'], ['btnFull', 'full'],
-  ['btnUndo', 'undo'], ['btnRedo', 'redo'], ['btnClear', 'clear'], ['btnAttach', 'clip'], ['btnIn', 'markIn'], ['btnOut', 'markOut'], ['btnClearIO', 'clearIO'], ['btnOnion', 'onion'], ['btnHold', 'hold'], ['btnDrawings', 'eye']]) document.getElementById(id).innerHTML = svg(ICONS[k]);
+  ['btnUndo', 'undo'], ['btnRedo', 'redo'], ['btnClear', 'clear'], ['btnAttach', 'clip'], ['btnIn', 'markIn'], ['btnOut', 'markOut'], ['btnClearIO', 'clearIO'], ['btnOnion', 'onion'], ['btnHold', 'hold'], ['btnDrawings', 'eye'], ['btnBg', 'background']]) document.getElementById(id).innerHTML = svg(ICONS[k]);
 const PANELS = [['left', 'L', 'Versions'], ['top', 'T', 'Header'], ['bottom', 'B', 'Drawing tools'], ['right', 'R', 'Notes']];
 
 const LS_STORE = `rt_store_${TOKEN}`, LS_OUTBOX = `rt_outbox_${TOKEN}`;
@@ -93,6 +95,7 @@ const S = {
   tool: localStorage.rt_tool || 'pen', color: localStorage.rt_color || COLORS[0], size: +localStorage.rt_bsize || SIZES[+(localStorage.rt_size || 1)] || SIZES[1], opacity: +localStorage.rt_opacity || 1,
   slots: JSON.parse(localStorage.rt_slots || '[null,null,null]'),
   hold: +(localStorage.rt_hold || 0), io: null, noteIO: false, draftSel: null, tcMode: localStorage.rt_tc === '1',     // io: In/Out in sequence frames; noteIO: the note covers it
+  bg: BACKGROUNDS.some(([k]) => k === localStorage.rt_bg) ? localStorage.rt_bg : 'black',
   showDrawings: localStorage.rt_show !== '0', onion: localStorage.rt_onion === '1', onionN: +(localStorage.rt_onion_n || 3),
   store: loadStore(), outbox: loadOutbox(), hist: {}, active: null, pick: null, selected: null, editing: null, hover: null,
   view: { z: 1, x: 0, y: 0, mode: 'screen' }, tl: { z: 1, x: 0 }, cmp: null, evCache: {},
@@ -574,7 +577,6 @@ function applyAudio() {
     v.defaultPlaybackRate = v.playbackRate = S.rate;
     v.loop = S.loop && S.seq.segs.length === 1 && !S.io;
   }
-  vC.playbackRate = S.rate;
 }
 
 function seek(f, { broadcast = true } = {}) {
@@ -630,6 +632,7 @@ function onEnded() {
   if (S.loop) { seek(0, { broadcast: false }); return playNow(); }
   S.playing = false;
   $('#btnPlay').innerHTML = svg(ICONS.play);
+  vC.pause();
   seek(nFrames() - 1, { broadcast: false });
   broadcastPresent();
 }
@@ -653,9 +656,10 @@ for (const v of VIDS) {
     S.playing = true;
     startTick();
     $('#btnPlay').innerHTML = svg(ICONS.pause);
-    cmpPlay();
+    cmpSync();
     broadcastPresent();
   });
+  v.addEventListener('waiting', () => { if (v === video && S.playing) vC.pause(); });  // the next frame shown starts it again
   v.addEventListener('pause', () => {
     if (v !== video || v.ended) return;
     S.playing = false;
@@ -686,10 +690,7 @@ function onFrame() {
   $('#playhead').style.left = tlPos(gFrame() + 0.5);
   followPlayhead();
   for (const el of $$('.note[data-frame]')) el.classList.toggle('at-frame', S.frame >= +el.dataset.frame && S.frame <= +el.dataset.end);
-  if (S.playing && S.cmp && !vC.paused && vC.readyState >= 1) {
-    const m = S.media[S.cmp.vid];
-    if (Math.abs(Math.floor(vC.currentTime * (m?.fps || 24)) - S.frame) > 1) cmpSeek();
-  }
+  if (S.playing) cmpSync();
   renderOverlay();
   if (!S.playing) renderFrameChip();
 }
@@ -776,6 +777,17 @@ $('#btnZoom').addEventListener('click', e => {
     ...ZOOM_SIZES.map(p => entry(p, `${p}%`))], { narrow: true });
 });
 
+// What shows around the movie. Proxies have no alpha, so only the stage changes: this person's own view, not shared with the room.
+function setBackground(bg) {
+  S.bg = localStorage.rt_bg = bg;
+  stage.dataset.bg = bg;
+}
+setBackground(S.bg);
+$('#btnBg').addEventListener('click', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  openMenu(r.left, r.top, BACKGROUNDS.map(([k, l]) => ({ html: `<i class="bgswatch" data-bg="${k}"></i>${l}`, on: S.bg === k, run: () => setBackground(k) })));
+});
+
 // Versions of a segment's shot/asset, newest first: the episode cut already has them, else ask once
 async function entityVersions(seg) {
   const sh = S.seq.shots?.[S.seq.segs.indexOf(seg)];
@@ -854,8 +866,30 @@ function cmpSeek() {
   const m = S.media[S.cmp.vid] || {};
   vC.currentTime = (clamp(S.frame, 0, (m.frame_count || 1) - 1) + 0.5) / (m.fps || 24);
 }
-function cmpPlay() { if (S.cmp && vC.readyState >= 1) { vC.playbackRate = S.rate; cmpSeek(); vC.play().catch(() => {}); } }
-vC.addEventListener('loadedmetadata', () => { cmpSeek(); if (S.playing) cmpPlay(); });
+// Runs on every frame the main video shows, and keeps the compare video on the same frame number. Seeking stalls a video, so
+// small differences are eased away through its speed. Only a real jump, such as a loop, seeks, aiming where the main video will be by then.
+const CMP_JUMP = 0.4;
+let cmpSeekAt = 0, cmpLag = 0.1;
+function cmpSync() {
+  if (!S.cmp || !S.cur || vC.readyState < 1 || vC.seeking) return;
+  const f = S.media[S.cmp.vid]?.fps || 24, k = fps() / f, want = video.currentTime * k, rate = S.rate * k, off = want - vC.currentTime;
+  if (want >= (vC.duration || Infinity) - 0.5 / f) {  // shorter than the main video: hold its last frame until the main video comes back
+    if (!vC.paused) vC.pause();
+    if (vC.duration - vC.currentTime > 1 / f) cmpSeek();
+    return;
+  }
+  if (vC.paused || Math.abs(off) > CMP_JUMP) {
+    if (Math.abs(off) > 0.5 / f) vC.currentTime = want + (vC.paused ? 0 : cmpLag * rate);
+    vC.playbackRate = rate;
+    if (vC.paused) vC.play().catch(() => {});
+  } else if (vC.readyState >= 2) {
+    const r = Math.abs(off) < 0.5 / f ? rate : rate * clamp(1 + off * 2, 0.75, 1.25);
+    if (Math.abs(vC.playbackRate - r) > 0.005) vC.playbackRate = r;
+  }
+}
+vC.addEventListener('seeking', () => { cmpSeekAt = performance.now(); });
+vC.addEventListener('seeked', () => { cmpLag = clamp((performance.now() - cmpSeekAt) / 1000, 0.02, 1); });
+vC.addEventListener('loadedmetadata', () => { cmpSeek(); cmpSync(); });
 
 function renderCompareBar() {
   const bar = $('#cmpBar');
@@ -3038,6 +3072,7 @@ const TIPS = {
   onionN: ['Onion skin frames', '', 'How many frames before and after to show.'],
   btnHold: ['Hold', 'G', 'Each drawing stays on screen until the next one, posted or not. New notes last until the next drawing.'],
   btnDrawings: ['Show drawings', 'H', 'Hide every drawing to see the clean frame.'],
+  btnBg: ['Background', '', 'What shows around the movie: black, gray, white or a pattern.'],
   btnZoom: ['Zoom', '', 'Fit to the screen, width or height, or pick a size. At 100% one movie pixel is one screen pixel. The mouse wheel zooms, the middle button pans, 0 fits the screen.'],
   btnFirst: ['First frame', 'Home', ''], btnLast: ['Last frame', 'End', ''],
   btnPrevNote: ['Previous note', '↑', 'Jump to the previous note or unposted drawing.'], btnNextNote: ['Next note', '↓', 'Jump to the next note or unposted drawing.'],

@@ -47,7 +47,7 @@ ReviewMeh is a self-hosted review tool for [ShotGrid / Flow Production Tracking]
 
 ## ✨ What it does
 
-- **Player.** Frame-accurate playback with frame-by-frame stepping. Review one version, several back to back, a mini-cut that includes the shots on either side, or a whole cut. Mini-cuts and whole cuts rely on [your site's cut information](docs/shotgrid-setup.md#cuts), and you can load them by task, by status, both, or the latest of everything. The player also has In/Out points, zoom and onion skin, and shows the playhead position in either frames or timecode.
+- **Player.** Frame-accurate playback with frame-by-frame stepping. Review one version, several back to back, a mini-cut that includes the shots on either side, or a whole cut. Mini-cuts and whole cuts rely on [your site's cut information](docs/shotgrid-setup.md#cuts), and you can load them by task, by status, both, or the latest of everything. The player also has In/Out points, zoom, onion skin and a choice of backgrounds behind the video, and shows the playhead position in either frames or timecode.
 - **Drawing.** Pen pressure-sensitive brush, marker, shapes, text and eraser, color picker and preset colors, and controls for size and opacity. You can move, edit and resize a drawing after making it, and copy and paste annotations between frames.
 - **Notes.** Every note is timecoded. Notes can also cover a frame range and carry file attachments, and everything is saved as you work.
 - **Compare.** View any other version within the same link side by side, as a wipe, blended or as a difference.

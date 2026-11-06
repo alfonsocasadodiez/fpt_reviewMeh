@@ -134,7 +134,17 @@ button.status:disabled { opacity: 1; cursor: default; }
 .iconlink { color: var(--muted); display: flex; padding: 4px; }
 .iconlink:hover { color: var(--text); }
 
-#stage { flex: 1; position: relative; min-height: 0; overflow: hidden; background: #000; }
+#stage { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+#stage, .bgswatch { background: var(--stage-bg, #000); }
+/* The same values as RV's View > Background. RV's own checker is the dark one; the plain one is a lighter version for this list. */
+[data-bg=grey18] { --stage-bg: #2e2e2e; }
+[data-bg=grey50] { --stage-bg: #808080; }
+[data-bg=white] { --stage-bg: #fff; }
+[data-bg=checker] { --stage-bg: conic-gradient(#ccc 25%, #999 0 50%, #ccc 0 75%, #999 0) 0 0 / 40px 40px; }
+[data-bg=checker-dark] { --stage-bg: conic-gradient(#333 25%, #262626 0 50%, #333 0 75%, #262626 0) 0 0 / 40px 40px; }
+[data-bg=crosshatch] { --stage-bg: #2e2e2e url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M0 0l8 8M8 0L0 8' stroke='%23404040' shape-rendering='crispEdges'/%3E%3C/svg%3E"); }
+.bgswatch { width: 14px; height: 14px; flex: none; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); background-size: 10px 10px; }
+.bgswatch[data-bg=crosshatch] { background-size: 8px 8px; }
 .frame { position: absolute; }
 .frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; }
 .frame video.on, #frameC video { visibility: visible; }
@@ -405,8 +415,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .ftree .fopt.on svg { visibility: visible; }
 .snote .sthumb { display: block; width: 100%; margin-top: 6px; border-radius: 4px; background: #000; aspect-ratio: 16 / 9; object-fit: contain; cursor: zoom-in; }
 
-/* wipe: the round handle turns the line */
-#wipe i { position: absolute; left: 50%; top: 12px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff;
+/* wipe: the round handle turns the line, always the same distance from its middle */
+#wipe i { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -47px 0 0 -7px; border-radius: 50%; background: #fff;
           box-shadow: 0 0 0 1px rgba(0,0,0,.4); cursor: grab; z-index: 1; }
 #wipe i:active { cursor: grabbing; }
 
