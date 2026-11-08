@@ -1473,13 +1473,14 @@ async def put_access(req: GroupRightsReq, request: Request):
 @app.get('/api/transcode')
 async def get_transcode(request: Request):
     require_admin(request)
-    return {**media.transcode_settings(), 'qualities': media.QUALITIES, 'widths': media.MAX_WIDTHS,
+    return {**media.transcode_settings(), 'qualities': media.QUALITIES, 'widths': media.MAX_WIDTHS, 'sources': media.SOURCES,
             'stored': await in_thread(media.stored)}
 
 
 class TranscodeReq(BaseModel):
     crf: int
     max_width: int
+    source: str | None = None  # left out: stays as it is
 
 
 @app.put('/api/transcode')
@@ -1490,7 +1491,10 @@ async def put_transcode(req: TranscodeReq, request: Request):
         raise HTTPException(400, 'Unknown quality')
     if req.max_width != now['max_width'] and req.max_width not in media.MAX_WIDTHS:
         raise HTTPException(400, 'Unknown width')
-    saved = {'crf': req.crf, 'max_width': req.max_width}
+    source = req.source or now['source']
+    if source not in {s['key'] for s in media.SOURCES}:
+        raise HTTPException(400, 'Unknown movie source')
+    saved = {'crf': req.crf, 'max_width': req.max_width, 'source': source}
     db.put_setting('transcode', saved)
     logger.info('%s set transcoding: %s', admin['name'], saved)
     return saved

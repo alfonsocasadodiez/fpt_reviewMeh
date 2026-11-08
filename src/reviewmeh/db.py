@@ -12,7 +12,7 @@ import sqlite3
 import threading
 from datetime import datetime
 
-from .config import DB_PATH, BACKUP_DIR, BACKUP_KEEP
+from .config import DB_PATH, BACKUP_DIR, BACKUP_KEEP, PROXY_SOURCE_SET
 
 _local = threading.local()
 
@@ -157,6 +157,7 @@ def conn() -> sqlite3.Connection:
 
 def init():
     c = conn()
+    existing = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media'").fetchone() is not None
     c.executescript(SCHEMA)
     first_frames = 'sg_frame_at' not in {r['name'] for r in c.execute('PRAGMA table_info(notes)')}
     for table, col, ddl in MIGRATIONS:
@@ -168,6 +169,13 @@ def init():
     c.execute('UPDATE media SET last_used=? WHERE last_used IS NULL', (time.time(),))
     # Idempotent posts: the browser retries with the same client_id until it gets an answer
     c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_notes_client ON notes(client_id) WHERE client_id IS NOT NULL')
+    # ShotGrid's MP4 is the default for new installs. Ones from before it keep transcoding every movie, as they did, until an
+    # admin changes it on the Transcoding tab or the config sets media.proxy_source. Checked once, so a new install stays new.
+    if not get_setting('proxy_source_checked'):
+        saved = get_setting('transcode', {})
+        if existing and not PROXY_SOURCE_SET and 'source' not in saved:
+            put_setting('transcode', {**saved, 'source': 'transcode'})
+        put_setting('proxy_source_checked', True)
 
 
 def backup():

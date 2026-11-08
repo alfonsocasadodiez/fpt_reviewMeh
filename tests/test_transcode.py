@@ -1,5 +1,6 @@
 """The transcoding settings admins change on the main page, and what ffmpeg is asked for."""
 import os
+import shutil
 import subprocess
 import time
 
@@ -61,6 +62,10 @@ def test_admins_only(client):
 
 def build(fake, client, movie, monkeypatch):
     monkeypatch.setattr(media.sg_bridge, 'download_movie', lambda vid, dest: (str(movie), 'movie.mp4', False))
+    return ingest(monkeypatch)
+
+
+def ingest(monkeypatch):
     monkeypatch.setattr(media, 'enqueue', ENQUEUE)
     media.enqueue(VID, force=True)
     for _ in range(600):
@@ -265,3 +270,157 @@ def test_a_short_process_reads_its_average_first_not_zero(client, fake):
     finally:
         burn.wait()
         system._procs.pop(burn.pid, None)
+
+
+# ─── ShotGrid's MP4 instead of transcoding ────────────────────────────────────
+
+def stream_hash(path):
+    """A hash of the video as stored, so a copy matches and a re-encode doesn't."""
+    return subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v', '-c', 'copy', '-f', 'streamhash', '-'],
+                          capture_output=True, text=True, check=True).stdout
+
+
+def use_shotgrid_mp4(client):
+    signed_in(client, 1)
+    assert client.put('/api/transcode', json={'crf': 18, 'max_width': 1920, 'source': 'shotgrid'}).status_code == 200
+
+
+@pytest.fixture()
+def encodes(monkeypatch):
+    """The movies ffmpeg was asked to transcode."""
+    made, real = [], media.proxy_command
+    monkeypatch.setattr(media, 'proxy_command', lambda src, dest, fps: made.append(src) or real(src, dest, fps))
+    return made
+
+
+def sg_mp4(monkeypatch, path):
+    monkeypatch.setattr(media.sg_bridge, 'download_sg_mp4', lambda vid, dest: shutil.copy(path, dest) and 'sh010_anim_v001.mp4')
+
+
+def use_transcoding(client):
+    signed_in(client, 1)
+    assert client.put('/api/transcode', json={'crf': 18, 'max_width': 1920, 'source': 'transcode'}).status_code == 200
+
+
+def test_new_installs_use_shotgrids_mp4_and_it_is_saved(client):
+    signed_in(client, 1)
+    t = client.get('/api/transcode').json()
+    assert t['source'] == 'shotgrid' and [s['key'] for s in t['sources']] == ['shotgrid', 'transcode']
+    use_transcoding(client)
+    assert client.get('/api/transcode').json()['source'] == 'transcode'
+    client.put('/api/transcode', json={'crf': 12, 'max_width': 1920})  # older pages leave it out: it stays
+    assert media.transcode_settings() == {'crf': 12, 'max_width': 1920, 'source': 'transcode'}
+
+
+@pytest.fixture()
+def upgrade(client):
+    """Start again on this database as if it came from before the movie source existed."""
+    def start(saved=None):
+        db.ex('DELETE FROM settings')
+        if saved is not None:
+            db.put_setting('transcode', saved)
+        db.init()
+        return media.transcode_settings()
+    return start
+
+
+def test_an_upgraded_install_keeps_transcoding(upgrade):
+    assert upgrade()['source'] == 'transcode'
+    assert upgrade({'crf': 12, 'max_width': 3840}) == {'crf': 12, 'max_width': 3840, 'source': 'transcode'}
+
+
+def test_an_upgraded_install_keeps_a_source_already_chosen(upgrade, monkeypatch):
+    assert upgrade({'crf': 18, 'max_width': 1920, 'source': 'shotgrid'})['source'] == 'shotgrid'
+    monkeypatch.setattr(db, 'PROXY_SOURCE_SET', True)  # media.proxy_source in the config or environment
+    assert upgrade()['source'] == 'shotgrid'
+
+
+def test_a_new_install_stays_on_shotgrids_mp4_after_restarts(upgrade):
+    upgrade()
+    db.ex("DELETE FROM settings WHERE key='transcode'")  # as on a new install: checked once, nothing saved
+    db.init()
+    assert media.transcode_settings()['source'] == 'shotgrid'
+
+
+def test_unknown_source_is_refused(client):
+    signed_in(client, 1)
+    assert client.put('/api/transcode', json={'crf': 18, 'max_width': 1920, 'source': 'ftp'}).status_code == 400
+    assert media.transcode_settings()['source'] == 'shotgrid'
+
+
+def test_shotgrids_mp4_is_used_as_it_is(client, fake, movie, monkeypatch, encodes):
+    db.ensure_media_row(VID)
+    use_shotgrid_mp4(client)
+    sg_mp4(monkeypatch, movie)
+    monkeypatch.setattr(media.sg_bridge, 'download_movie', lambda *a: pytest.fail('the uploaded movie was downloaded'))
+    ingest(monkeypatch)
+    m = db.media(VID)
+    assert encodes == [] and stream_hash(media.proxy_path(VID)) == stream_hash(movie)
+    assert (m['fps'], m['frame_count'], m['width'], m['height'], m['src_name']) == (24, 48, 320, 180, 'sh010_anim_v001.mp4')
+    assert os.path.isfile(media.thumb_path(VID)) and sorted(os.listdir(media.vdir(VID))) == ['proxy.mp4', 'thumb.jpg']
+
+
+def test_the_uploaded_movie_is_transcoded_without_an_mp4(client, fake, movie, monkeypatch, encodes):
+    """FakeShotgrid's versions have no sg_uploaded_movie_mp4, as when ShotGrid hasn't made it yet."""
+    db.ensure_media_row(VID)
+    use_shotgrid_mp4(client)
+    build(fake, client, movie, monkeypatch)
+    assert encodes == [str(movie)] and db.media(VID)['src_name'] == 'movie.mp4'
+
+
+def test_an_mp4_the_player_cant_step_through_is_transcoded(client, fake, movie, monkeypatch, encodes, tmp_path):
+    odd = tmp_path / 'odd.mp4'
+    subprocess.run(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24:duration=1', '-c:v', 'libx264',
+                    '-pix_fmt', 'yuv444p', str(odd)], check=True)
+    db.ensure_media_row(VID)
+    use_shotgrid_mp4(client)
+    sg_mp4(monkeypatch, odd)
+    build(fake, client, movie, monkeypatch)
+    assert encodes == [str(movie)] and media.probe(media.proxy_path(VID))['streams'][0]['pix_fmt'] == 'yuv420p'
+
+
+def test_a_failed_mp4_download_falls_back_to_transcoding(client, fake, movie, monkeypatch, encodes):
+    def broken(vid, dest):
+        open(dest, 'wb').write(b'half a movie')
+        raise RuntimeError('connection reset')
+    db.ensure_media_row(VID)
+    use_shotgrid_mp4(client)
+    monkeypatch.setattr(media.sg_bridge, 'download_sg_mp4', broken)
+    build(fake, client, movie, monkeypatch)
+    assert encodes == [str(movie)] and not os.path.exists(os.path.join(media.vdir(VID), 'sg.tmp.mp4'))
+
+
+def test_the_transcode_setting_never_asks_for_the_mp4(client, fake, movie, monkeypatch, encodes):
+    db.ensure_media_row(VID)
+    use_transcoding(client)
+    monkeypatch.setattr(media.sg_bridge, 'download_sg_mp4', lambda *a: pytest.fail('asked ShotGrid for its MP4'))
+    build(fake, client, movie, monkeypatch)
+    assert encodes == [str(movie)]
+
+
+@pytest.mark.parametrize('stream, why', [
+    ({'codec_name': 'hevc', 'pix_fmt': 'yuv420p', 'r_frame_rate': '24/1', 'avg_frame_rate': '24/1'}, 'not H.264'),
+    ({'codec_name': 'h264', 'pix_fmt': 'yuv422p10le', 'r_frame_rate': '24/1', 'avg_frame_rate': '24/1'}, 'not 4:2:0'),
+    ({'codec_name': 'h264', 'pix_fmt': 'yuv420p', 'r_frame_rate': '60/1', 'avg_frame_rate': '2997/125'}, 'not constant'),
+])
+def test_what_makes_an_mp4_unplayable(stream, why):
+    assert why in media.unplayable({'streams': [{'codec_type': 'video', **stream}]})
+
+
+def test_a_constant_rate_mp4_with_aac_is_playable():
+    assert media.unplayable({'streams': [
+        {'codec_type': 'video', 'codec_name': 'h264', 'pix_fmt': 'yuv420p', 'r_frame_rate': '24000/1001', 'avg_frame_rate': '24000/1001'},
+        {'codec_type': 'audio', 'codec_name': 'aac'}]}) is None
+
+
+def test_download_sg_mp4_takes_either_form_of_the_field(fake, monkeypatch, tmp_path):
+    from reviewmeh import sg_bridge
+    got = []
+    conn = fake.as_user()
+    for value in ('https://cdn.test/v.mp4', {'url': 'https://cdn.test/v.mp4', 'name': 'x'}):
+        monkeypatch.setattr(conn, 'find_one', lambda *a, v=value, **kw: {'id': VID, 'sg_uploaded_movie': {'name': 'sh010.mov'}, 'sg_uploaded_movie_mp4': v})
+        monkeypatch.setattr(conn, 'download_attachment', lambda att, file_path: got.append(att['url']), raising=False)
+        assert sg_bridge.download_sg_mp4(VID, str(tmp_path / 'v.mp4')) == 'sh010.mp4'
+    assert got == ['https://cdn.test/v.mp4'] * 2
+    monkeypatch.setattr(conn, 'find_one', lambda *a, **kw: {'id': VID, 'sg_uploaded_movie_mp4': None})
+    assert sg_bridge.download_sg_mp4(VID, str(tmp_path / 'v.mp4')) is None

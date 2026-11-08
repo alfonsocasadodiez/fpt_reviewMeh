@@ -558,6 +558,22 @@ def download_movie(version_id, dest_dir):
     return dest, name, True
 
 
+
+def download_sg_mp4(version_id, dest):
+    """Download the MP4 ShotGrid made of the version's uploaded movie to `dest`. Returns a name for it, or None when
+    ShotGrid has none (no uploaded movie, or it hasn't finished transcoding it)."""
+    v = sg().find_one('Version', [['id', 'is', version_id]], ['sg_uploaded_movie', 'sg_uploaded_movie_mp4'])
+    if not v:
+        raise RuntimeError('Version not found in ShotGrid')
+    mp4 = v.get('sg_uploaded_movie_mp4')
+    if isinstance(mp4, str):  # a url field can come back as the bare address
+        mp4 = {'url': mp4}
+    if not mp4 or not mp4.get('url'):
+        return None
+    sg().download_attachment(mp4, file_path=dest)
+    up = (v.get('sg_uploaded_movie') or {}).get('name')
+    return f'{os.path.splitext(up)[0]}.mp4' if up else f'{version_id}.mp4'
+
 # ─── publishing ───────────────────────────────────────────────────────────────
 
 def note_end(n, notes, frame_count):

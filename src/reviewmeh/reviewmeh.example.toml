@@ -34,9 +34,10 @@ accent = "#0796d4"
 accent_hover = "#0aa6eb"
 
 [media]
-# Where these two start. Admins can change them on the main page, in Transcoding
+# Where these three start. Admins can change them on the main page, in Transcoding
 proxy_max_width = 1920
 proxy_crf = 18                              # x264 quality: lower is better and bigger
+proxy_source = "shotgrid"                   # Use the MP4 ShotGrid made of the uploaded movie, transcoding only without one. Or "transcode" every movie
 ingest_workers = 4
 render_workers = 8                          # Frames rendered side by side for exports and publishing
 publish_versions = 4                        # Versions published side by side

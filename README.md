@@ -52,7 +52,7 @@ ReviewMeh is a self-hosted review tool for [ShotGrid / Flow Production Tracking]
 - **Notes.** Every note is timecoded. Notes can also cover a frame range and carry file attachments, and everything is saved as you work.
 - **Compare.** View any other version within the same link side by side, as a wipe, blended or as a difference.
 - **Live room.** Present to everyone in the review, with your pointer on their screens. Everyone can show or hide the pointers of the others on the same version.
-- **Transcoding.** Admins set the quality and maximum width of the movies ReviewMeh plays, on the main page, and can clear the processed movies of one review or all of them. Cleared movies are made again when next opened. The same tab shows live CPU, memory and disk use, and each movie being transcoded.
+- **Transcoding.** ReviewMeh plays the MP4 ShotGrid already made of each uploaded movie, with no transcoding, and transcodes a movie only when ShotGrid has no MP4 of it. On the main page, admins can have it transcode every movie instead, at the quality and maximum width they set. They can also clear the processed movies of one review or all of them. Cleared movies are made again when next opened. The same tab shows live CPU, memory and disk use, and each movie being transcoded.
 - **Publish to ShotGrid.** Notes go back to ShotGrid in a thread, ordered by frame number. The thread includes the annotated frames and a link back to ReviewMeh, where the annotations play inside the video.
 - **Exports.** Export a PDF report with notes and annotations, the annotated frames organized in a ZIP, or the text as a CSV.
 - **Sharing.** Share links to users or guests into a review, with control over their rights and an optional password.

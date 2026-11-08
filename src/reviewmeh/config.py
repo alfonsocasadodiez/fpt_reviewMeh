@@ -105,6 +105,11 @@ ACCENT_HOVER = _get('branding', 'accent_hover', '#0aa6eb')
 # Media
 PROXY_MAX_WIDTH = int(_get('media', 'proxy_max_width', 1920))
 PROXY_CRF = int(_get('media', 'proxy_crf', 18))
+# shotgrid: use the MP4 ShotGrid made of the uploaded movie as it is, transcoding only when there's none or it won't play
+# frame-accurately in a browser. transcode: encode every proxy from the uploaded movie. Installs from before shotgrid became
+# the default keep transcode (db.init) unless this is set.
+PROXY_SOURCE_SET = _get('media', 'proxy_source') not in (None, '')
+PROXY_SOURCE = str(_get('media', 'proxy_source', 'shotgrid')).strip().lower()
 INGEST_WORKERS = int(_get('media', 'ingest_workers', 4))
 RENDER_WORKERS = int(_get('media', 'render_workers', 8))
 PUBLISH_VERSIONS = int(_get('media', 'publish_versions', 4))

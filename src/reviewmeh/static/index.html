@@ -30,6 +30,7 @@
     .credit a:hover { color: var(--accent2); }
     .transcode label { margin-right: 18px; }
     .transcode p { margin: 12px 0 0; }
+    .transcode[data-source="shotgrid"] .for-transcode, .transcode:not([data-source="shotgrid"]) .for-shotgrid { display: none; }
     td.acts { white-space: nowrap; }
     #tcStatus { margin-top: 14px; color: var(--text); font-size: 13px; }
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -159,11 +160,13 @@ async function drawTranscode() {
   const t = await (await fetch('/api/transcode')).json();
   const quality = t.qualities.some(q => q.crf === t.crf) ? t.qualities : [...t.qualities, { crf: t.crf, name: 'Custom' }];
   const widths = t.widths.includes(t.max_width) ? t.widths : [...t.widths, t.max_width].sort((a, b) => a - b);
-  $('#content').innerHTML = `<div class="card transcode">
-    <label>Quality <select id="tcCrf">${quality.map(q => `<option value="${q.crf}"${q.crf === t.crf ? ' selected' : ''}>${esc(q.name)} (CRF ${q.crf})</option>`).join('')}</select></label>
-    <label>Maximum width <select id="tcWidth">${widths.map(w => `<option value="${w}"${w === t.max_width ? ' selected' : ''}>${w} px</option>`).join('')}</select></label>
+  $('#content').innerHTML = `<div class="card transcode" data-source="${esc(t.source)}">
+    <label>Movies <select id="tcSource">${t.sources.map(s => `<option value="${s.key}"${s.key === t.source ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
+    <label class="for-transcode">Quality <select id="tcCrf">${quality.map(q => `<option value="${q.crf}"${q.crf === t.crf ? ' selected' : ''}>${esc(q.name)} (CRF ${q.crf})</option>`).join('')}</select></label>
+    <label class="for-transcode">Maximum width <select id="tcWidth">${widths.map(w => `<option value="${w}"${w === t.max_width ? ' selected' : ''}>${w} px</option>`).join('')}</select></label>
     <span class="muted" id="tcSaved"></span>
-    <p class="muted">Better quality and larger sizes look sharper but take longer to process and use more disk and bandwidth. Movies smaller than the maximum width aren't enlarged.</p>
+    <p class="muted for-transcode">Better quality and larger sizes look sharper but take longer to process and use more disk and bandwidth. Movies smaller than the maximum width aren't enlarged.</p>
+    <p class="muted for-shotgrid">The movie ShotGrid made for its own player is downloaded and used as it is, with no transcoding. A version is only transcoded when ShotGrid has no MP4 of it or its MP4 can't be played frame by frame, at the quality and width last chosen for transcoding.</p>
     <p class="muted">Movies already processed keep their quality until they're made again. To do that, right-click versions in a review and choose Reprocess, use Clear movies on a review in the Active list, or clear them all here.</p>
     <p><button id="tcClear"${t.stored.movies ? '' : ' disabled'}>Clear all processed movies</button> <span class="muted" id="tcStored">${t.stored.movies} ${t.stored.movies === 1 ? 'movie' : 'movies'}, ${t.stored.bytes >= 2 ** 30 ? `${(t.stored.bytes / 2 ** 30).toFixed(1)} GB` : `${Math.round(t.stored.bytes / 2 ** 20)} MB`}</span></p>
   </div><div id="tcStatus" aria-live="off"></div>`;
@@ -213,7 +216,8 @@ function drawStatus(s) {
 }
 $('#content').addEventListener('change', async e => {
   if (e.target.closest('.transcode')) {
-    const r = await fetch('/api/transcode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crf: +$('#tcCrf').value, max_width: +$('#tcWidth').value }) });
+    $('.transcode').dataset.source = $('#tcSource').value;  // Quality and width only apply when transcoding
+    const r = await fetch('/api/transcode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crf: +$('#tcCrf').value, max_width: +$('#tcWidth').value, source: $('#tcSource').value }) });
     if (!r.ok) { alert((await r.json()).detail); return drawTranscode(); }
     $('#tcSaved').textContent = 'Saved';
     return;

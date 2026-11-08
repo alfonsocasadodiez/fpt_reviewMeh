@@ -2,6 +2,8 @@
 """
 Media ingest: pull a Version's movie from ShotGrid, transcode a frame-accurate review proxy
 (constant fps, short GOP, no B-frames, faststart), probe it, make a thumbnail.
+With the 'shotgrid' source, the MP4 ShotGrid made of the uploaded movie is used instead, its streams copied as they are,
+and the movie is only transcoded when ShotGrid has no MP4 or its MP4 isn't one a browser can step through frame by frame.
 Proxies are keyed by version id, so a version is ingested once and can be streamed by any review
 (its items, mini-cut / cut neighbours, compare versions).
 
@@ -19,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import db
 from . import sg_bridge
-from .config import MEDIA_ROOT, PROXY_MAX_WIDTH, PROXY_CRF, INGEST_WORKERS
+from .config import MEDIA_ROOT, PROXY_MAX_WIDTH, PROXY_CRF, PROXY_SOURCE, INGEST_WORKERS
 
 logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=INGEST_WORKERS, thread_name_prefix='ingest')
@@ -40,11 +42,46 @@ def vdir(version_id):
 
 QUALITIES = [{'crf': 28, 'name': 'Draft'}, {'crf': 23, 'name': 'Standard'}, {'crf': 18, 'name': 'High'}, {'crf': 12, 'name': 'Highest'}]
 MAX_WIDTHS = [1280, 1920, 2560, 3840]
+SOURCES = [{'key': 'shotgrid', 'name': "Use ShotGrid's MP4"}, {'key': 'transcode', 'name': 'Transcode the uploaded movie'}]
 
 
 def transcode_settings():
     """What new proxies are made with: as admins set it on the main page, else the config."""
-    return {'crf': PROXY_CRF, 'max_width': PROXY_MAX_WIDTH, **db.get_setting('transcode', {})}
+    return {'crf': PROXY_CRF, 'max_width': PROXY_MAX_WIDTH, 'source': PROXY_SOURCE, **db.get_setting('transcode', {})}
+
+
+def copy_command(src, dest):
+    """ShotGrid's MP4 as it is: first video and audio streams copied, not encoded, with the index moved to the front."""
+    return ['ffmpeg', '-y', '-nostdin', '-v', 'error', '-i', src, '-map', '0:v:0', '-map', '0:a:0?',
+            '-c', 'copy', '-movflags', '+faststart', dest]
+
+
+def _rate(value):
+    n, _, d = (value or '0/0').partition('/')
+    try:
+        return float(n) / float(d or 1)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def unplayable(info):
+    """Why a movie can't be played as it is (probe() output), or None. The player needs H.264 in 4:2:0 at a constant
+    frame rate, for frame numbers to line up, and audio a browser can decode."""
+    video = [s for s in info.get('streams', []) if s.get('codec_type') == 'video']
+    if not video:
+        return 'no video stream'
+    v = video[0]
+    if v.get('codec_name') != 'h264':
+        return f"video is {v.get('codec_name')}, not H.264"
+    if v.get('pix_fmt') not in ('yuv420p', 'yuvj420p'):
+        return f"pixels are {v.get('pix_fmt')}, not 4:2:0"
+    r, avg = _rate(v.get('r_frame_rate')), _rate(v.get('avg_frame_rate'))
+    if not 1 <= r <= 240 or (avg and abs(r - avg) > r * .01):
+        return 'frame rate is not constant'
+    audio = [s for s in info['streams'] if s.get('codec_type') == 'audio']
+    if audio and audio[0].get('codec_name') not in ('aac', 'mp3'):
+        return f"audio is {audio[0].get('codec_name')}"
+    return None
 
 
 def proxy_command(src, dest, fps):
@@ -206,42 +243,83 @@ def _fps(stream):
     return 24.0
 
 
+def _timing(info):
+    """(fps, frames guessed from the duration or 0, has audio) of a probed movie."""
+    vstreams = [s for s in info['streams'] if s.get('codec_type') == 'video']
+    if not vstreams:
+        raise RuntimeError('No video stream in source')
+    vs = vstreams[0]
+    fps = _fps(vs)
+    duration = float(info.get('format', {}).get('duration') or vs.get('duration') or 0)
+    return fps, max(1, round(duration * fps)) if duration else 0, any(s.get('codec_type') == 'audio' for s in info['streams'])
+
+
+def _transcode(version_id, src, src_name, workdir):
+    """Encode the proxy from the uploaded movie, reporting progress. Returns (fps, frames guessed from the duration)."""
+    fps, total_frames, has_audio = _timing(probe(src))
+    _update(version_id, status='transcoding', progress=0, src_name=src_name, fps=fps, has_audio=int(has_audio))
+    tmp = os.path.join(workdir, 'proxy.tmp.mp4')
+    proc = subprocess.Popen(proxy_command(src, tmp, fps), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _running[version_id].update(transcoding=time.time(), pid=proc.pid)
+    last = 0
+    for line in proc.stdout:
+        if line.startswith('frame=') and total_frames:
+            pct = min(0.99, int(line.split('=')[1] or 0) / total_frames)
+            if pct - last >= 0.05:
+                last = pct
+                _update(version_id, progress=pct)
+    err = proc.stderr.read()
+    if proc.wait() != 0:
+        raise RuntimeError(f'ffmpeg failed: {err[-500:]}')
+    os.replace(tmp, proxy_path(version_id))
+    return fps, total_frames
+
+
+def _localize(version_id, workdir):
+    """Make ShotGrid's MP4 of the uploaded movie the proxy, without encoding it. Returns (fps, frames guessed from the
+    duration), or None to transcode the uploaded movie instead: ShotGrid has no MP4 of it, or it can't be played as it is."""
+    src, tmp = os.path.join(workdir, 'sg.tmp.mp4'), os.path.join(workdir, 'proxy.tmp.mp4')
+    try:
+        name = sg_bridge.download_sg_mp4(version_id, src)
+        if not name:
+            logger.info('Version %s has no ShotGrid MP4: transcoding its movie', version_id)
+            return None
+        info = probe(src)
+        why = unplayable(info)
+        if why:
+            logger.info("Version %s: ShotGrid's MP4 can't be used as it is (%s): transcoding its movie", version_id, why)
+            return None
+        done = subprocess.run(copy_command(src, tmp), capture_output=True, text=True)
+        if done.returncode != 0:
+            raise RuntimeError(f'ffmpeg failed: {done.stderr[-500:]}')
+        os.replace(tmp, proxy_path(version_id))
+    except Exception:
+        logger.warning("Version %s: couldn't use ShotGrid's MP4: transcoding its movie", version_id, exc_info=True)
+        return None
+    finally:
+        if os.path.exists(src):
+            os.remove(src)
+    fps, total_frames, has_audio = _timing(info)
+    _update(version_id, src_name=name, fps=fps, has_audio=int(has_audio))
+    return fps, total_frames
+
+
 def _ingest(version_id):
     workdir = vdir(version_id)
     _running[version_id] = {'started': time.time(), 'transcoding': None, 'pid': None}
     try:
         os.makedirs(workdir, exist_ok=True)
         _update(version_id, status='downloading', progress=0)
-        src, src_name, is_temp = sg_bridge.download_movie(version_id, workdir)
-        if not src:
-            _update(version_id, status='nomedia', error='Version has no uploaded movie')
-            return
-
-        info = probe(src)
-        vstreams = [s for s in info['streams'] if s.get('codec_type') == 'video']
-        if not vstreams:
-            raise RuntimeError('No video stream in source')
-        vs = vstreams[0]
-        fps = _fps(vs)
-        has_audio = any(s.get('codec_type') == 'audio' for s in info['streams'])
-        duration = float(info.get('format', {}).get('duration') or vs.get('duration') or 0)
-        total_frames = max(1, round(duration * fps)) if duration else 0
-
-        _update(version_id, status='transcoding', progress=0, src_name=src_name, fps=fps, has_audio=int(has_audio))
-        tmp = os.path.join(workdir, 'proxy.tmp.mp4')
-        proc = subprocess.Popen(proxy_command(src, tmp, fps), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        _running[version_id].update(transcoding=time.time(), pid=proc.pid)
-        last = 0
-        for line in proc.stdout:
-            if line.startswith('frame=') and total_frames:
-                pct = min(0.99, int(line.split('=')[1] or 0) / total_frames)
-                if pct - last >= 0.05:
-                    last = pct
-                    _update(version_id, progress=pct)
-        err = proc.stderr.read()
-        if proc.wait() != 0:
-            raise RuntimeError(f'ffmpeg failed: {err[-500:]}')
-        os.replace(tmp, proxy_path(version_id))
+        src, is_temp = None, False
+        made = _localize(version_id, workdir) if transcode_settings()['source'] == 'shotgrid' else None
+        if made:
+            fps, total_frames = made
+        else:
+            src, src_name, is_temp = sg_bridge.download_movie(version_id, workdir)
+            if not src:
+                _update(version_id, status='nomedia', error='Version has no uploaded movie')
+                return
+            fps, total_frames = _transcode(version_id, src, src_name, workdir)
 
         # Exact frame count / size from the proxy itself
         out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets',
@@ -263,7 +341,7 @@ def _ingest(version_id):
         logger.exception('Ingest failed for version %s', version_id)
         _update(version_id, status='error', error=str(e)[:500])
     finally:
-        for f in ('proxy.tmp.mp4',):
+        for f in ('proxy.tmp.mp4', 'sg.tmp.mp4'):
             p = os.path.join(workdir, f)
             if os.path.exists(p):
                 os.remove(p)
