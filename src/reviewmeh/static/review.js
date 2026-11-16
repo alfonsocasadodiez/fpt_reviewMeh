@@ -610,6 +610,7 @@ function togglePlay() {
   const g = gFrame();
   if (S.io && (g < S.io.a || g >= S.io.b)) return jumpGlobal(S.io.a, true);
   if (S.frame >= nFrames() - 1 && S.seq.segs.length === 1 && !S.loop) seek(0, { broadcast: false });
+  diffSeed();
   playNow();
 }
 function jumpGlobal(g, play) {
@@ -642,6 +643,7 @@ function startTick() {
   const tick = (now, md) => {
     if (!S.playing || v !== video) return;
     S.frame = timeToFrame(md ? md.mediaTime : v.currentTime);
+    if (md && diffOn()) diffPush(diffQ.a, v, S.frame);
     if (S.io && gFrame() >= S.io.b && performance.now() - (S.ioJump || 0) > 150) { ioEnd(); if (!S.playing) return; }
     onFrame();
     if ('requestVideoFrameCallback' in v) v.requestVideoFrameCallback(tick); else requestAnimationFrame(() => tick());
@@ -691,6 +693,7 @@ function onFrame() {
   followPlayhead();
   for (const el of $$('.note[data-frame]')) el.classList.toggle('at-frame', S.frame >= +el.dataset.frame && S.frame <= +el.dataset.end);
   if (S.playing) cmpSync();
+  if (!diffOn() && (diffQ.a.length || diffQ.c.length || !diffCv.hidden)) diffReset();
   renderOverlay();
   if (!S.playing) renderFrameChip();
 }
@@ -734,7 +737,8 @@ function layout() {
     const m = S.cmp.mode;
     place(fc, m === 'side' ? { ...R, x: R.x + W / 2 } : R);
     fc.style.opacity = m === 'blend' ? S.cmp.opacity : 1;
-    fc.style.mixBlendMode = m === 'diff' ? 'difference' : 'normal';
+    if (!vC.dataset.url && !diffCv.hidden) diffReset();  // nothing to compare against: no pair will come
+    fc.style.mixBlendMode = m === 'diff' && diffCv.hidden ? 'difference' : 'normal';
     const g = m === 'wipe' ? wipeGeom(R) : null;
     fc.style.clipPath = g ? g.clip : 'none';
     if (g) {
@@ -890,6 +894,64 @@ function cmpSync() {
 vC.addEventListener('seeking', () => { cmpSeekAt = performance.now(); });
 vC.addEventListener('seeked', () => { cmpLag = clamp((performance.now() - cmpSeekAt) / 1000, 0.02, 1); });
 vC.addEventListener('loadedmetadata', () => { cmpSeek(); cmpSync(); });
+
+// Difference while playing. Two video elements never put their frames on screen at the same instant, however close their clocks
+// are, so blending the elements shows changes that are not there. Instead each frame is copied as it is shown, with its frame
+// number, and only two frames with the same number are drawn. Paused, both elements sit on one frame and the plain blend is exact.
+const diffCv = $('#diffC'), diffCtx = diffCv.getContext('2d'), DIFF_KEEP = 6;
+const diffQ = { a: [], c: [] }, diffSpare = [];
+const diffOn = () => S.playing && S.cmp?.mode === 'diff' && 'requestVideoFrameCallback' in vC;
+function diffReset() {
+  diffQ.a.length = diffQ.c.length = diffSpare.length = 0;
+  diffCv.hidden = true;
+  $('#frameC').style.mixBlendMode = S.cmp?.mode === 'diff' ? 'difference' : 'normal';
+}
+function diffPush(q, v, n) {
+  if (!v.videoWidth) return;
+  // Another shot or another version: nothing kept can pair with it. The last pair stays up until the first new one.
+  if (q.length && q[0].src !== v.currentSrc) for (const k of 'ac') diffSpare.push(...diffQ[k].splice(0).map(x => x.cv));
+  const cv = (q.length >= DIFF_KEEP ? q.shift().cv : diffSpare.pop()) || document.createElement('canvas');
+  if (cv.width !== v.videoWidth || cv.height !== v.videoHeight) { cv.width = v.videoWidth; cv.height = v.videoHeight; }
+  cv.getContext('2d').drawImage(v, 0, 0);
+  q.push({ n, cv, src: v.currentSrc });
+  diffDraw();
+}
+// Play was pressed with both videos resting on the same frame: show that pair at once, so the two elements are never seen
+// unpaired while the compare video gets going.
+function diffSeed() {
+  if (S.cmp?.mode !== 'diff' || !('requestVideoFrameCallback' in vC) || !vC.dataset.url) return;
+  if (video.seeking || vC.seeking || video.readyState < 2 || vC.readyState < 2) return;
+  diffReset();
+  diffPush(diffQ.a, video, S.frame);
+  diffPush(diffQ.c, vC, Math.min(S.frame, (S.media[S.cmp.vid]?.frame_count || Infinity) - 1));
+}
+// Draws the newest main frame whose pair has arrived. A shorter compare version holds its last frame, as cmpSync does.
+function diffDraw() {
+  const last = (S.media[S.cmp.vid]?.frame_count || Infinity) - 1;
+  for (let i = diffQ.a.length - 1; i >= 0; i--) {
+    const a = diffQ.a[i].cv, c = diffQ.c.find(x => x.n === Math.min(diffQ.a[i].n, last))?.cv;
+    if (!c) continue;
+    if (diffCv.width !== a.width || diffCv.height !== a.height) { diffCv.width = a.width; diffCv.height = a.height; }
+    const s = Math.min(a.width / c.width, a.height / c.height), w = c.width * s, h = c.height * s;
+    diffCtx.globalCompositeOperation = 'copy';
+    diffCtx.drawImage(a, 0, 0);
+    diffCtx.globalCompositeOperation = 'difference';
+    diffCtx.drawImage(c, (a.width - w) / 2, (a.height - h) / 2, w, h);
+    for (const x of diffQ.a.splice(0, i + 1)) diffSpare.push(x.cv);
+    if (diffCv.hidden) { diffCv.hidden = false; $('#frameC').style.mixBlendMode = 'normal'; }
+    return;
+  }
+}
+if ('requestVideoFrameCallback' in vC) {
+  const shown = (now, md) => {
+    if (diffOn()) {
+      const m = S.media[S.cmp.vid] || {};
+      diffPush(diffQ.c, vC, clamp(Math.floor(md.mediaTime * (m.fps || 24) + 1e-4), 0, (m.frame_count || Infinity) - 1));
+    }
+    vC.requestVideoFrameCallback(shown);
+  };
+  vC.requestVideoFrameCallback(shown);
+}
 
 function renderCompareBar() {
   const bar = $('#cmpBar');

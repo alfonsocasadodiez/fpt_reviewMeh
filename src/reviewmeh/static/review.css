@@ -148,6 +148,7 @@ button.status:disabled { opacity: 1; cursor: default; }
 .frame { position: absolute; }
 .frame video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; visibility: hidden; }
 .frame video.on, #frameC video { visibility: visible; }
+#diffC { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; z-index: 2; }
 #stage.tool-none canvas { cursor: default; }
 #stage.tool-draw canvas { cursor: crosshair; }
