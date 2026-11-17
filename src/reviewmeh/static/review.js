@@ -297,14 +297,17 @@ function applyData(d) {
   $('#reviewMeta').textContent = r.project_name || '';
   applyAccess();
 }
-// What this link allows: hide what can't be used
+// What this link allows: hide what can't be used. Shot notes are internal history: never for guests (no Flow id)
+const shotTab = () => !!S.me?.id;
 function applyAccess() {
   for (const [id, perm] of [['btnShare', 'share'], ['btnPublish', 'publish'], ['btnAdd', 'add'], ['btnPresent', 'present'], ['btnExport', 'download']])
     $(`#${id}`).hidden = !can(perm);
   document.body.classList.toggle('no-comment', !can('comment'));
   S.fieldDefs = null; S.details = {}; S.detailDefs = {}; S.sgNotes = {}; S.linkOpen.clear(); S.linkRows = {};  // rights may have changed
   $('#rtabDetails').hidden = !can('details');
+  $('#rtabShot').hidden = !shotTab();
   if (S.rtab === 'details' && !can('details')) S.rtab = 'notes';
+  if (S.rtab === 'shot' && !shotTab()) S.rtab = 'notes';
   if (!can('comment') && S.tool !== 'none') setTool('none');
 }
 for (const v of [...VIDS, vC]) v.addEventListener('contextmenu', e => { if (!can('download')) e.preventDefault(); });
@@ -2094,6 +2097,7 @@ function detailKeys() {
 function renderRightPane() {
   S.rtab ||= localStorage.rt_rtab || 'notes';
   if (S.rtab === 'details' && !can('details')) S.rtab = 'notes';
+  if (S.rtab === 'shot' && !shotTab()) S.rtab = 'notes';
   const tab = S.rtab;
   $$('#rtabs button').forEach(b => b.classList.toggle('active', b.dataset.rtab === tab));
   $('#rtabShot').textContent = S.cur?.entity_type === 'Asset' ? 'Asset notes' : 'Shot notes';
@@ -2141,8 +2145,8 @@ function renderShotNotes() {
   }
   for (const n of S.sgNotes[`${cur.entity_type}:${cur.entity_id}`]?.list || []) {
     if (inReview.has(n.id)) continue;
-    group(n.version_id, n.version_code).cards.push(`<div class="snote" data-sg="${n.id}" ${n.version_id ? `data-vid="${n.version_id}"` : ''}>
-      <div class="head">${avatar(n.author_name || '?', 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span><span class="t">${ago(n.created_at)}</span>${sgCopy(n.id)}</div>
+    group(n.version_id, n.version_code).cards.push(`<div class="snote${n.client ? ' client' : ''}" data-sg="${n.id}" ${n.version_id ? `data-vid="${n.version_id}"` : ''}>
+      <div class="head">${avatar(n.author_name || '?', 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span>${n.client ? '<span class="ctag">Client</span>' : ''}<span class="t">${ago(n.created_at)}</span>${sgCopy(n.id)}</div>
       <div class="txt">${esc(n.text)}</div>${n.images.map(id => `<img class="sthumb" loading="lazy" alt="" src="${API}/attachment/${id}" onerror="this.remove()">`).join('')}${n.replies.map(r => `<div class="rep">${esc(r)}</div>`).join('')}</div>`);
   }
   const html = [...groups.values()].sort((a, b) => (b.vid ?? -1) - (a.vid ?? -1)).map(g => `<div class="sgroup${g.vid === cur.version_id ? ' cur' : ''}">

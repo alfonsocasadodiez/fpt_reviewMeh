@@ -235,16 +235,18 @@ def versions_field(version_ids, key):
     return {v['id']: _value_out(v.get(key)) for v in found}
 
 
-def entity_notes(project_id, entity_type, entity_id):
-    """ShotGrid Notes on a shot/asset or any of its versions, newest first; each with the version it is on."""
+def entity_notes(project_id, entity_type, entity_id, login):
+    """ShotGrid Notes on a shot/asset or any of its versions, newest first; each with the version it is on.
+    Read as the person (sudo), so ShotGrid's own permissions apply: client notes stay hidden from groups that can't see them."""
+    conn = sg(login)
     ent = {'type': entity_type, 'id': int(entity_id)}
-    versions = {v['id'] for v in sg().find('Version', [['entity', 'is', ent]], [])}
+    versions = {v['id'] for v in conn.find('Version', [['entity', 'is', ent]], [])}
     links = [['note_links', 'is', ent]]
     if versions:
         links.append(['note_links', 'in', [{'type': 'Version', 'id': i} for i in versions]])
-    rows = sg().find('Note', [['project', 'is', {'type': 'Project', 'id': int(project_id)}],
+    rows = conn.find('Note', [['project', 'is', {'type': 'Project', 'id': int(project_id)}],
                               {'filter_operator': 'any', 'filters': links}],
-                     ['content', 'subject', 'user', 'created_at', 'note_links', 'replies', 'sg_note_type', 'attachments'],
+                     ['content', 'subject', 'user', 'created_at', 'note_links', 'replies', 'sg_note_type', 'attachments', 'client_note'],
                      order=[{'field_name': 'created_at', 'direction': 'desc'}], limit=300)
     out = []
     for n in rows:
@@ -252,7 +254,7 @@ def entity_notes(project_id, entity_type, entity_id):
         user = n.get('user') or {}
         out.append({'id': n['id'], 'text': n.get('content') or n.get('subject') or '', 'author_name': user.get('name') or '',
                     'author_id': user.get('id') if user.get('type') == 'HumanUser' else None,
-                    'created_at': _ts(n.get('created_at')), 'note_type': n.get('sg_note_type'),
+                    'created_at': _ts(n.get('created_at')), 'note_type': n.get('sg_note_type'), 'client': bool(n.get('client_note')),
                     'version_id': ver['id'] if ver else None, 'version_code': ver.get('name') if ver else None,
                     'images': [x['id'] for x in n.get('attachments') or [] if _is_image(x.get('name'))],
                     'replies': [r.get('name') or '' for r in n.get('replies') or []]})
@@ -263,11 +265,16 @@ def _is_image(name):
     return (name or '').lower().rsplit('.', 1)[-1] in ('png', 'jpg', 'jpeg')
 
 
-def note_attachment_url(attachment_id, project_id):
-    """Download url of an image attached to a Note in the project, else None."""
-    a = sg().find_one('Attachment', [['id', 'is', int(attachment_id)], ['project', 'is', {'type': 'Project', 'id': int(project_id)}]],
-                      ['this_file', 'filename', 'attachment_links'])
-    if not a or not _is_image(a.get('filename')) or not any(l['type'] == 'Note' for l in a.get('attachment_links') or []):
+def note_attachment_url(attachment_id, project_id, login):
+    """Download url of an image attached to a Note in the project that this person can see, else None. Read as the
+    person (sudo), so a client note's images stay hidden as the note does. The project is the Note's, as images drawn
+    on the Client Review Site have no project of their own."""
+    conn = sg(login)
+    a = conn.find_one('Attachment', [['id', 'is', int(attachment_id)]], ['this_file', 'filename', 'attachment_links'])
+    notes = [l['id'] for l in (a or {}).get('attachment_links') or [] if l['type'] == 'Note']
+    if not notes or not _is_image(a.get('filename')):
+        return None
+    if not conn.find_one('Note', [['id', 'in', notes], ['project', 'is', {'type': 'Project', 'id': int(project_id)}]], []):
         return None
     return (a.get('this_file') or {}).get('url')
 

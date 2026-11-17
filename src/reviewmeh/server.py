@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 from pydantic import BaseModel
+import shotgun_api3
 
 from . import db
 from . import exports
@@ -875,26 +876,38 @@ async def version_details(token: str, version_id: int, request: Request, fields:
     return {'vals': vals, 'defs': defs}
 
 
+def sg_reader(a):
+    """Login to read ShotGrid's own notes as, so its permissions apply: signed-in people with these rights. Never guests."""
+    u = a.user or {}
+    return u.get('login') if u.get('v') and 'open' in a.perms and 'versions' in a.perms else None
+
+
 @app.get('/api/r/{token}/entity_notes')
 async def entity_notes(token: str, entity_type: str, entity_id: int, request: Request):
-    """ShotGrid's own notes for the shot/asset. Internal history: never for guests."""
+    """ShotGrid's own notes for the shot/asset, as this person may see them. Internal history: never for guests."""
     a = access(token, request)
-    if 'open' not in a.perms or 'versions' not in a.perms or entity_type not in ('Shot', 'Asset'):
+    login = sg_reader(a)
+    if not login or entity_type not in ('Shot', 'Asset'):
         return []
-    return await in_thread(sg_bridge.entity_notes, a.review['project_id'], entity_type, entity_id)
+    try:
+        return await in_thread(sg_bridge.entity_notes, a.review['project_id'], entity_type, entity_id, login)
+    except shotgun_api3.Fault:  # sudo refused: show nothing rather than everything the script can see
+        logger.warning('Could not read notes as %s', login, exc_info=True)
+        return []
 
 
 ATTACH_DIR = os.path.join(MEDIA_ROOT, 'attachments')  # on the NAS: full-size frames, until clear_cache removes them
 
 
-def attachment_file(attachment_id, project_id):
-    """Local copy of an annotated frame attached to a ShotGrid Note (attachments never change)."""
-    path = os.path.join(ATTACH_DIR, f'{attachment_id}.img')
-    if os.path.exists(path):
-        return path
-    url = sg_bridge.note_attachment_url(attachment_id, project_id)
+def attachment_file(attachment_id, project_id, login):
+    """Local copy of an annotated frame attached to a ShotGrid Note (attachments never change). ShotGrid is asked first
+    every time, as this person: the copy is only served when they may see the note in this project."""
+    url = sg_bridge.note_attachment_url(attachment_id, project_id, login)
     if not url or not url.startswith('https://'):
         return None
+    path = os.path.join(ATTACH_DIR, f'{int(attachment_id)}.img')
+    if os.path.exists(path):
+        return path
     with urllib.request.urlopen(url, timeout=30) as r:
         data = r.read(30_000_000)
     os.makedirs(ATTACH_DIR, exist_ok=True)
@@ -908,9 +921,13 @@ def attachment_file(attachment_id, project_id):
 @app.get('/api/r/{token}/attachment/{attachment_id}')
 async def note_attachment(token: str, attachment_id: int, request: Request):
     a = access(token, request)
-    if 'open' not in a.perms or 'versions' not in a.perms:
+    login = sg_reader(a)
+    if not login:
         raise HTTPException(403, 'Not allowed with this link')
-    path = await in_thread(attachment_file, attachment_id, a.review['project_id'])
+    try:
+        path = await in_thread(attachment_file, attachment_id, a.review['project_id'], login)
+    except shotgun_api3.Fault:
+        path = None
     if not path:
         raise HTTPException(404, 'Attachment not found')
     return FileResponse(path, media_type='image/png', headers={'Cache-Control': 'private, max-age=86400'})

@@ -1,6 +1,6 @@
 :root {
   --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --border: #30363d; --text: #e6edf3;
-  --muted: #8b949e; --accent: #0796d4; --accent2: #0aa6eb; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+  --muted: #8b949e; --accent: #0796d4; --accent2: #0aa6eb; --ok: #3fb950; --warn: #d29922; --err: #f85149; --client: #bf5af2;
   --radius: 8px; --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
   color-scheme: dark;
 }
@@ -479,3 +479,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 #sideTag span { padding: 0 4px; overflow: hidden; text-overflow: ellipsis; }
 #sideTag span:first-child { text-align: right; }
 #sideTag .icon { width: 24px; height: 24px; padding: 0; }
+.snote.client { border-color: var(--client); box-shadow: inset 3px 0 0 var(--client); }
+.snote.client:hover { border-color: var(--client); background: color-mix(in srgb, var(--client) 8%, var(--panel2)); }
+.snote .ctag { flex: none; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: #fff; background: var(--client); border-radius: 4px; padding: 1px 5px; }

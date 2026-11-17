@@ -81,8 +81,16 @@ class Conn:
                     rows = [r for r in rows if r['id'] == f[2]]
             return rows
         if entity == 'Note':
-            ids = next((f[2] for f in filters if isinstance(f, list) and f[:2] == ['id', 'in']), [])
-            return [{'type': 'Note', 'id': i} for i in ids if i in self.world.notes]
+            # ShotGrid hides client notes from groups without the right; here, from the logins in world.no_client_notes
+            seen = lambda i: not (self.sudo in self.world.no_client_notes and any(r['id'] == i and r.get('client_note') for r in self.world.note_rows))
+            ids = next((f[2] for f in filters if isinstance(f, list) and f[:2] == ['id', 'in']), None)
+            if ids is None:
+                return [r for r in self.world.note_rows if seen(r['id'])]
+            project = next((f[2]['id'] for f in filters if isinstance(f, list) and f[:2] == ['project', 'is']), None)
+            return [{'type': 'Note', 'id': i} for i in ids if i in self.world.notes and seen(i) and project in (None, self.world.note_projects.get(i, project))]
+        if entity == 'Attachment':
+            one = next((f[2] for f in filters if f[:2] == ['id', 'is']), None)
+            return [r for r in self.world.attachments if r['id'] == one]
         if entity == 'Status':
             return [{'code': 'rev', 'bg_color': '192,97,253'}, {'code': 'apr', 'bg_color': '25,118,27'}]
         if entity == 'Version':
@@ -127,6 +135,8 @@ class Conn:
 class FakeShotgrid:
     def __init__(self):
         self.calls, self.notes, self.fail_uploads, self.refuse_sudo = [], set(), [], set()
+        self.note_projects, self.attachments = {}, []  # note id: project id; Attachment rows
+        self.note_rows, self.no_client_notes = [], set()  # Note rows for entity_notes; logins that can't see client notes
         self.next_id = 90000
         self.shots, self.parents, self.links, self.entity_names = [], {}, {}, {}  # a site's own cut setup
         self.statuses = {'Version': ['rev', 'apr', 'hld'], 'Note': ['opn', 'clsd'], 'Shot': ['ip', 'omt', 'cut']}
