@@ -58,7 +58,7 @@ STATIC_DIR = os.path.join(HERE, 'static')
 COOKIE = 'rt_id'
 COOKIE_AGE = 30 * 86400
 BACKUP_EVERY = 86400
-CACHE_EVERY = 86400
+CACHE_EVERY = 3600  # hourly, so the size limit holds
 signer = URLSafeTimedSerializer(SECRET, salt='reviewmeh-identity')
 LOOP: Optional[asyncio.AbstractEventLoop] = None
 
@@ -142,27 +142,31 @@ async def backup_loop():
 
 
 def clear_cache(in_use):
-    """Delete copies of ShotGrid's files that haven't been needed for CACHE_DAYS, which can all be fetched again.
-    Notes, their drawings, drafts and the files people attached aren't part of this."""
-    if CACHE_DAYS <= 0:
-        return
-    cutoff = time.time() - CACHE_DAYS * 86400
-    proxies, files = media.clear_idle(cutoff, in_use), 0
-    for folder in (ATTACH_DIR, AVATAR_DIR):
-        if os.path.isdir(folder):
-            for f in os.scandir(folder):
-                if f.is_file() and f.stat().st_mtime < cutoff:
-                    os.remove(f.path)
-                    files += 1
-    if proxies or files:
-        logger.info('Cache cleanup: removed %s proxies and %s other files unused for %s days', proxies, files, CACHE_DAYS)
+    """Delete copies of ShotGrid's files that haven't been needed for CACHE_DAYS, which can all be fetched again,
+    then, over the size limit, the proxies used longest ago. Notes, their drawings, drafts and the files people attached aren't part of this."""
+    if CACHE_DAYS > 0:
+        cutoff = time.time() - CACHE_DAYS * 86400
+        proxies, files = media.clear_idle(cutoff, in_use), 0
+        for folder in (ATTACH_DIR, AVATAR_DIR):
+            if os.path.isdir(folder):
+                for f in os.scandir(folder):
+                    if f.is_file() and f.stat().st_mtime < cutoff:
+                        os.remove(f.path)
+                        files += 1
+        if proxies or files:
+            logger.info('Cache cleanup: removed %s proxies and %s other files unused for %s days', proxies, files, CACHE_DAYS)
+    media.enforce_limit(in_use)
+
+
+def versions_in_use():
+    """Versions in a review someone has open: their proxies stay."""
+    return {i['version_id'] for rid, room in list(hub.rooms.items()) if room for i in db.review_items(rid)}
 
 
 async def cache_loop():
     while True:
         try:
-            in_use = {i['version_id'] for rid, room in list(hub.rooms.items()) if room for i in db.review_items(rid)}  # someone has it open
-            await in_thread(clear_cache, in_use)
+            await in_thread(clear_cache, versions_in_use())
         except Exception:
             logger.exception('Cache cleanup failed')
         await asyncio.sleep(CACHE_EVERY)
@@ -176,6 +180,7 @@ async def lifespan(app: FastAPI):
     await in_thread(exports.clear_leftovers)
     await in_thread(clear_stale_uploads)
     media.set_notifier(media_notifier)
+    media.set_in_use(versions_in_use)
     await in_thread(media.resume_pending)
     _users.update(db.get_setting('user_groups', {}))
     _group_rights.update(GROUP_RIGHTS | db.get_setting('group_rights', {}))
@@ -1491,13 +1496,14 @@ async def put_access(req: GroupRightsReq, request: Request):
 async def get_transcode(request: Request):
     require_admin(request)
     return {**media.transcode_settings(), 'qualities': media.QUALITIES, 'widths': media.MAX_WIDTHS, 'sources': media.SOURCES,
-            'stored': await in_thread(media.stored)}
+            'cache_gb': media.cache_gb(), 'cache_limits': media.CACHE_LIMITS, 'stored': await in_thread(media.stored)}
 
 
 class TranscodeReq(BaseModel):
     crf: int
     max_width: int
     source: str | None = None  # left out: stays as it is
+    cache_gb: int | None = None  # left out: stays as it is
 
 
 @app.put('/api/transcode')
@@ -1511,10 +1517,17 @@ async def put_transcode(req: TranscodeReq, request: Request):
     source = req.source or now['source']
     if source not in {s['key'] for s in media.SOURCES}:
         raise HTTPException(400, 'Unknown movie source')
+    cache_gb = media.cache_gb() if req.cache_gb is None else req.cache_gb
+    if cache_gb != media.cache_gb() and cache_gb not in media.CACHE_LIMITS:
+        raise HTTPException(400, 'Unknown storage limit')
     saved = {'crf': req.crf, 'max_width': req.max_width, 'source': source}
     db.put_setting('transcode', saved)
+    if cache_gb != media.cache_gb():
+        db.put_setting('cache_gb', cache_gb)
+        logger.info('%s set the movie storage limit to %s GB', admin['name'], cache_gb)
+        await in_thread(clear_cache, versions_in_use())  # a lower limit applies now, not in an hour
     logger.info('%s set transcoding: %s', admin['name'], saved)
-    return saved
+    return {**saved, 'cache_gb': cache_gb}
 
 
 @app.get('/api/transcode/status')

@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import db
 from . import sg_bridge
-from .config import MEDIA_ROOT, PROXY_MAX_WIDTH, PROXY_CRF, PROXY_SOURCE, INGEST_WORKERS
+from .config import MEDIA_ROOT, PROXY_MAX_WIDTH, PROXY_CRF, PROXY_SOURCE, INGEST_WORKERS, CACHE_GB
 
 logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=INGEST_WORKERS, thread_name_prefix='ingest')
@@ -29,11 +29,18 @@ _inflight = set()
 _running = {}  # version_id -> {'started', 'transcoding', 'pid'}: what the status panel shows
 _lock = threading.Lock()
 _notify = None  # callable(version_id) set by the server to push status over websockets
+_in_use = set  # callable() -> version ids someone has open, set by the server: the size limit keeps them
+_trim_lock = threading.Lock()  # one trim at a time, so two finishing ingests don't both delete for the same excess
 
 
 def set_notifier(fn):
     global _notify
     _notify = fn
+
+
+def set_in_use(fn):
+    global _in_use
+    _in_use = fn
 
 
 def vdir(version_id):
@@ -43,6 +50,12 @@ def vdir(version_id):
 QUALITIES = [{'crf': 28, 'name': 'Draft'}, {'crf': 23, 'name': 'Standard'}, {'crf': 18, 'name': 'High'}, {'crf': 12, 'name': 'Highest'}]
 MAX_WIDTHS = [1280, 1920, 2560, 3840]
 SOURCES = [{'key': 'shotgrid', 'name': "Use Flow's MP4"}, {'key': 'transcode', 'name': 'Transcode the uploaded movie'}]
+CACHE_LIMITS = [0, 25, 50, 100, 200, 500, 1000]  # GB of processed movies; 0: no limit
+
+
+def cache_gb():
+    """The most disk processed movies may take, in GB: as admins set it on the main page, else the config. 0: no limit."""
+    return int(db.get_setting('cache_gb', CACHE_GB))
 
 
 def transcode_settings():
@@ -171,6 +184,41 @@ def clear_idle(cutoff, keep=()):
     return len(cleared)
 
 
+def trim(limit_bytes, keep=()):
+    """Remove finished proxies, the ones used longest ago first, until they take no more than `limit_bytes`.
+    Versions in `keep` and those being made stay, even if that leaves the total over. Returns how many were removed."""
+    rows = [(m['version_id'], _size(m['version_id'])) for m in db.q("SELECT version_id FROM media WHERE status='ready' ORDER BY last_used, version_id")]
+    total = sum(size for _, size in rows)
+    cleared = []
+    for vid, size in rows:
+        if total <= limit_bytes:
+            break
+        if vid in keep:
+            continue
+        with _lock:  # enqueue() can't start this version while its folder is going
+            if vid in _inflight or db.media(vid)['status'] != 'ready':
+                continue
+            db.set_media(vid, status='cleared', progress=0)
+            remove_media(vid)
+        cleared.append(vid)
+        total -= size
+    for vid in cleared:
+        _update(vid)  # pages still open on it hear about it
+    return len(cleared)
+
+
+def enforce_limit(keep=None):
+    """Apply the storage limit, if one is set: on the cleanup timer, when it's changed, and after every new proxy."""
+    limit = cache_gb()
+    if limit <= 0:
+        return 0
+    with _trim_lock:
+        trimmed = trim(limit * 2 ** 30, _in_use() if keep is None else keep)
+    if trimmed:
+        logger.info('Storage limit: removed %s proxies opened longest ago, to keep movies under %s GB', trimmed, limit)
+    return trimmed
+
+
 def clear(version_ids=None):
     """Remove finished proxies, of these versions or of all. They're made again when next opened. Returns how many went."""
     wanted = None if version_ids is None else set(version_ids)
@@ -193,11 +241,15 @@ def clear(version_ids=None):
 def stored():
     """How many finished proxies there are and the disk they take, with their thumbnails."""
     rows = db.q("SELECT version_id FROM media WHERE status='ready'")
+    return {'movies': len(rows), 'bytes': sum(_size(m['version_id']) for m in rows)}
+
+
+def _size(version_id):
+    """Bytes in a version's folder: its proxy, thumbnail and frames."""
     size = 0
-    for m in rows:
-        for root, _, files in os.walk(vdir(m['version_id'])):
-            size += sum(os.path.getsize(os.path.join(root, f)) for f in files)
-    return {'movies': len(rows), 'bytes': size}
+    for root, _, files in os.walk(vdir(version_id)):
+        size += sum(os.path.getsize(os.path.join(root, f)) for f in files)
+    return size
 
 
 def activity():
@@ -337,6 +389,10 @@ def _ingest(version_id):
         _update(version_id, status='ready', progress=1, error=None, fps=fps, frame_count=frames,
                 width=int(st['width']), height=int(st['height']), last_used=time.time(), built_at=time.time())
         logger.info('Ingested version %s: %s frames @ %s fps', version_id, frames, fps)
+        try:
+            enforce_limit()  # this one is still in _inflight, so it stays
+        except Exception:
+            logger.exception('Storage limit check failed')
     except Exception as e:
         logger.exception('Ingest failed for version %s', version_id)
         _update(version_id, status='error', error=str(e)[:500])

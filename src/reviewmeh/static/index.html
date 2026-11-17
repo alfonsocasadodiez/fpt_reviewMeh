@@ -160,6 +160,8 @@ async function drawTranscode() {
   const t = await (await fetch('/api/transcode')).json();
   const quality = t.qualities.some(q => q.crf === t.crf) ? t.qualities : [...t.qualities, { crf: t.crf, name: 'Custom' }];
   const widths = t.widths.includes(t.max_width) ? t.widths : [...t.widths, t.max_width].sort((a, b) => a - b);
+  const limits = t.cache_limits.includes(t.cache_gb) ? t.cache_limits : [...t.cache_limits, t.cache_gb].sort((a, b) => a - b);
+  const gb = n => (n ? (n >= 1000 && n % 1000 === 0 ? `${n / 1000} TB` : `${n} GB`) : 'No limit');
   $('#content').innerHTML = `<div class="card transcode" data-source="${esc(t.source)}">
     <label>Movies <select id="tcSource">${t.sources.map(s => `<option value="${s.key}"${s.key === t.source ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
     <label class="for-transcode">Quality <select id="tcCrf">${quality.map(q => `<option value="${q.crf}"${q.crf === t.crf ? ' selected' : ''}>${esc(q.name)} (CRF ${q.crf})</option>`).join('')}</select></label>
@@ -168,6 +170,8 @@ async function drawTranscode() {
     <p class="muted for-transcode">Better quality and larger sizes look sharper but take longer to process and use more disk and bandwidth. Movies smaller than the maximum width aren't enlarged.</p>
     <p class="muted for-shotgrid">The movie Flow made for its own player is downloaded and used as it is, with no transcoding. A version is only transcoded when Flow has no MP4 of it or its MP4 can't be played frame by frame, at the quality and width last chosen for transcoding.</p>
     <p class="muted">Movies already processed keep their quality until they're made again. To do that, right-click versions in a review and choose Reprocess, use Clear movies on a review in the Active list, or clear them all here.</p>
+    <p><label>Storage limit <select id="tcLimit">${limits.map(n => `<option value="${n}"${n === t.cache_gb ? ' selected' : ''}>${gb(n)}</option>`).join('')}</select></label></p>
+    <p class="muted">When processed movies take more than this, the ones opened longest ago are deleted first, until they fit. Movies in a review someone has open stay. Checked each time a movie is made and when you change it.</p>
     <p><button id="tcClear"${t.stored.movies ? '' : ' disabled'}>Clear all processed movies</button> <span class="muted" id="tcStored">${t.stored.movies} ${t.stored.movies === 1 ? 'movie' : 'movies'}, ${t.stored.bytes >= 2 ** 30 ? `${(t.stored.bytes / 2 ** 30).toFixed(1)} GB` : `${Math.round(t.stored.bytes / 2 ** 20)} MB`}</span></p>
   </div><div id="tcStatus" aria-live="off"></div>`;
   pollStatus();
@@ -217,8 +221,9 @@ function drawStatus(s) {
 $('#content').addEventListener('change', async e => {
   if (e.target.closest('.transcode')) {
     $('.transcode').dataset.source = $('#tcSource').value;  // Quality and width only apply when transcoding
-    const r = await fetch('/api/transcode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crf: +$('#tcCrf').value, max_width: +$('#tcWidth').value, source: $('#tcSource').value }) });
+    const r = await fetch('/api/transcode', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crf: +$('#tcCrf').value, max_width: +$('#tcWidth').value, source: $('#tcSource').value, cache_gb: +$('#tcLimit').value }) });
     if (!r.ok) { alert((await r.json()).detail); return drawTranscode(); }
+    if (e.target.id === 'tcLimit') return drawTranscode();  // the movie count and size may have dropped
     $('#tcSaved').textContent = 'Saved';
     return;
   }

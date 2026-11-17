@@ -170,6 +170,7 @@ Most sites only need the four values in `.env`. Any other setting can go there t
 | `branding.app_name`, `logo`, `accent` | Your name, logo and color |
 | `storage.media_root` | Where proxies, attachments and exports go. A network mount is fine, but the database must stay on a local disk |
 | `storage.cache_days` | [How long unused proxies are kept](#cache-cleanup), 15 days by default. `0` keeps them |
+| `storage.cache_gb` | [The most disk processed movies may take](#cache-cleanup), in GB. `0`, the default, sets no limit. Admins can change it on the Transcoding tab |
 | `access.admin_group` | The ShotGrid permission groups that run ReviewMeh, if not `Admin`. Environment variable: `REVIEWMEH_ADMIN_GROUP` |
 | `schema.cut_by` | [What groups shots into a cut](docs/shotgrid-setup.md#cuts). Found per project by default. Environment variable: `REVIEWMEH_CUT_BY` |
 | `schema.omit_status` | Shot statuses left out of cuts, if not `omt` |
@@ -179,7 +180,7 @@ Most sites only need the four values in `.env`. Any other setting can go there t
 
 ### Cache cleanup
 
-Once a day, ReviewMeh deletes proxies, thumbnails and local copies of ShotGrid's note images that haven't been used for 15 days. Versions in a review that someone has open are kept. When a review is opened again, its proxies are rebuilt from ShotGrid.
+Every hour, ReviewMeh deletes proxies, thumbnails and local copies of ShotGrid's note images that haven't been used for 15 days. If a storage limit is set, proxies are also deleted, the ones opened longest ago first, until they fit under it. That's checked each time a movie is made, too. Versions in a review that someone has open are kept. When a review is opened again, its proxies are rebuilt from ShotGrid.
 
 Notes, drawings, drafts and the files people attach to notes are stored separately and aren't deleted, so drawings can be viewed and edited again once the proxy is rebuilt. Rebuilding needs the movie to still be in ShotGrid. If it has been removed, the notes remain but their frames can't be shown.
 

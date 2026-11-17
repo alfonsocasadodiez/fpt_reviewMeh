@@ -25,6 +25,7 @@ data_dir = "data"
 # backup_dir = "/mnt/nas/reviewmeh-backups"
 backup_keep = 30
 cache_days = 15                             # Delete proxies unused for this long; they're rebuilt from ShotGrid when needed. 0: keep them
+cache_gb = 0                                # Most GB proxies may take; above it the ones opened longest ago go first. 0: no limit
 
 [branding]
 app_name = "ReviewMeh"

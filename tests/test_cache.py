@@ -219,3 +219,58 @@ def test_proxies_from_before_the_cleanup_get_the_full_period(client):
     db.ex('UPDATE media SET last_used=NULL WHERE version_id=55')
     db.init()
     assert db.media(55)['last_used'] > time.time() - 60
+
+
+def stored_movie(version_id, size, last_used):
+    """A finished proxy of `size` bytes, last opened at `last_used`."""
+    shutil.rmtree(media.vdir(version_id), ignore_errors=True)
+    os.makedirs(media.vdir(version_id))
+    with open(media.proxy_path(version_id), 'wb') as f:
+        f.write(b'\0' * size)
+    db.ex('INSERT OR REPLACE INTO media (version_id, status, updated_at, last_used) VALUES (?, ?, ?, ?)', (version_id, 'ready', last_used, last_used))
+
+
+def test_over_the_size_limit_the_movies_opened_longest_ago_go_first(client):
+    now = time.time()
+    for vid, days in ((201, 9), (202, 1), (203, 5), (204, 0)):
+        stored_movie(vid, 1000, now - days * 86400)
+    assert media.trim(2500, set()) == 2
+    assert [db.media(v)['status'] for v in (201, 202, 203, 204)] == ['cleared', 'ready', 'cleared', 'ready']
+    assert not os.path.exists(media.vdir(201)) and os.path.isfile(media.proxy_path(204))
+    assert media.trim(2500, set()) == 0
+
+
+def test_the_size_limit_skips_open_and_unfinished_versions(client):
+    now = time.time()
+    for vid, days in ((201, 9), (202, 8), (203, 1)):
+        stored_movie(vid, 1000, now - days * 86400)
+    media._inflight.add(202)
+    try:
+        assert media.trim(1000, {201}) == 1
+    finally:
+        media._inflight.discard(202)
+    assert [db.media(v)['status'] for v in (201, 202, 203)] == ['ready', 'ready', 'cleared']
+
+
+def test_the_cleanup_keeps_movies_under_the_limit_set_on_the_dashboard(client, monkeypatch):
+    signed_in(client, 1)
+    assert client.get('/api/transcode').json()['cache_gb'] == 0
+    calls = []
+    monkeypatch.setattr(media, 'trim', lambda limit, keep: calls.append(limit) or 0)
+    client.server.clear_cache(set())
+    assert calls == []  # no limit
+    assert client.put('/api/transcode', json={'crf': 23, 'max_width': 1920, 'cache_gb': 50}).status_code == 200
+    assert calls == [50 * 2 ** 30]  # applied straight away
+    assert client.get('/api/transcode').json()['cache_gb'] == 50
+    assert client.put('/api/transcode', json={'crf': 23, 'max_width': 1920}).status_code == 200  # older page: limit stays
+    assert client.get('/api/transcode').json()['cache_gb'] == 50
+    assert client.put('/api/transcode', json={'crf': 23, 'max_width': 1920, 'cache_gb': 7}).status_code == 400
+
+
+def test_a_new_movie_over_the_limit_makes_room_straight_away(client, built, monkeypatch):
+    stored_movie(201, 1000, time.time() - 86400)
+    monkeypatch.setattr(media, 'cache_gb', lambda: 2000 / 2 ** 30)  # a 2000-byte limit, smaller than any real proxy
+    client.post('/ami/review?key=ami-key', data={'entity_type': 'Version', 'selected_ids': str(VID), 'project_id': '7'})
+    wait_for_ingest()
+    assert db.media(VID)['status'] == 'ready' and os.path.isfile(media.proxy_path(VID))  # the new one stays, even over the limit
+    assert db.media(201)['status'] == 'cleared' and not os.path.exists(media.vdir(201))

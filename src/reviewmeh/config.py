@@ -71,6 +71,7 @@ MEDIA_ROOT = str(Path(_get('storage', 'media_root', DATA_DIR / 'media')))
 BACKUP_DIR = str(Path(_get('storage', 'backup_dir', DATA_DIR / 'backups')))
 BACKUP_KEEP = int(_get('storage', 'backup_keep', 30))
 CACHE_DAYS = int(_get('storage', 'cache_days', 15))  # Delete proxies and other copies of ShotGrid's files after this many days unused. 0: keep them
+CACHE_GB = int(_get('storage', 'cache_gb', 0))  # Above this, the proxies used longest ago are deleted first. 0: no limit. The dashboard can change it
 
 
 def _made_once(name):
