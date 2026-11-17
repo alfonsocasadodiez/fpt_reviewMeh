@@ -99,7 +99,7 @@ Press `?` in a review to see these at any time. On a Mac, `Cmd` works in place o
 
 ## 📋 Requirements
 
-- Docker and git in a machine with fairly decent specs (it's going to transcode every shot it loads!)
+- Docker and git in a machine with fairly decent specs (if it's going to transcode)
 - A ShotGrid site where you can add a Script with its own permission group and turn on the App Session Launcher
 - HTTPS and a reverse proxy, if you need to share reviews through public links
 
