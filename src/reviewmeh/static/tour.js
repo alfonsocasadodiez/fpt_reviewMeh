@@ -3,7 +3,7 @@
 const TOUR_STEPS = [
   ['#itemList', 'Versions', 'Click a version to play it. Shift or Cmd-click several to play them back to back, then right-click to act on all of them.'],
   ['#modeSeg', 'Version, Mini-cut, whole cut', 'Watch one version on its own, with the shots either side, or everything in cut order.'],
-  ['#statusBtn', 'Status', 'Changes the version status in ShotGrid straight away.'],
+  ['#statusBtn', 'Status', 'Changes the version status in Flow straight away.'],
   ['#btnCompare', 'Compare', 'Puts another version of the shot next to this one: side by side, wipe, blend or difference. The wipe line turns from its round handle.'],
   ['#stage', 'Viewer', 'Wheel zooms and middle-drag pans. Draw straight on the frame with the tools below. Right-click a drawing to cut, copy or paste it to another frame.'],
   ['#tools', 'Drawing tools', 'Brush follows pen pressure, marker keeps one width. With Select, drag a drawing to move it or a handle to resize it. The eraser cuts strokes where it touches.'],
@@ -12,12 +12,12 @@ const TOUR_STEPS = [
   ['#track', 'Timeline', 'Wheel zooms, Shift-wheel pans. Click a drawing’s marker, then Shift-click where it should end, to make it last. Shift-drag anywhere else sets In and Out.'],
   ['#ioBtns', 'In and Out', 'Set where playback starts and stops, and clear it. It works across shots too. Keys: I, O and Esc.'],
   ['#tc', 'Frames or timecode', 'Click to switch how frames are shown and typed everywhere.'],
-  ['#rtabs', 'Notes, Shot notes, Details', 'Notes on this version, every note on the shot with its drawings, or the ShotGrid fields you choose.'],
+  ['#rtabs', 'Notes, Shot notes, Details', 'Notes on this version, every note on the shot with its drawings, or the Flow fields you choose.'],
   ['#composer', 'Posting', 'Post sends your comment, any files you attach and every unposted drawing on this version, one note per drawn frame. Drawings stay saved until you post them.'],
   ['#btnExport', 'Download and export', 'This frame, the movie, or an export: PDF report, annotated frames as ZIP, notes as CSV.'],
   ['#btnShare', 'Share', 'Copy the studio link, or create a link that expires, with or without guests and a password.'],
   ['#btnPresent', 'Present', 'Everyone in the review follows your playback and sees your pointer.'],
-  ['#btnPublish', 'Publish to SG', 'Sends your notes to ShotGrid, one thread per version with each frame and file next to its text, and a link back here. You see what will go first.'],
+  ['#btnPublish', 'Publish to Flow', 'Sends your notes to Flow, one thread per version with each frame and file next to its text, and a link back here. You see what will go first.'],
   ['#btnTour', 'That’s it', 'Hover any control for a short explanation, and press ? for every shortcut.'],
 ];
 

@@ -219,7 +219,7 @@ def me(request_or_ws):
 def require_open(request):
     u = me(request)
     if not u or not u.get('v'):
-        raise HTTPException(403, 'Sign in with ShotGrid to do this')
+        raise HTTPException(403, 'Sign in with Flow to do this')
     if 'open' not in user_rights(u):
         raise HTTPException(403, NO_RIGHTS)
     return u
@@ -237,8 +237,8 @@ ALL_RIGHTS = {k for k, _ in RIGHTS}
 GUEST_PERMS = ('comment', 'attach', 'download', 'versions', 'details')
 MAX_SHARE_DAYS = SHARE_MAX_DAYS
 NEEDS_USER = {'comment', 'attach', 'status', 'publish', 'add', 'share', 'present'}
-SIGN_IN = 'Sign in with ShotGrid to open this review'
-NO_RIGHTS = "Your ShotGrid group can't open this review"
+SIGN_IN = 'Sign in with Flow to open this review'
+NO_RIGHTS = "Your Flow group can't open this review"
 _users = {}          # ShotGrid user id (str) -> {'group', 'active'}
 _group_rights = {}   # group -> rights; loaded at start, changed from the dashboard
 
@@ -472,7 +472,7 @@ async def review_page(request: Request, token: str, auth: Optional[str] = None):
         try:
             user = signer.loads(auth, max_age=7 * 86400)['auth']
         except (BadSignature, KeyError, TypeError):
-            raise HTTPException(403, 'Invalid or expired link — open the review again from ShotGrid')
+            raise HTTPException(403, 'Invalid or expired link — open the review again from Flow')
         qs = '&'.join(f'{k}={v}' for k, v in request.query_params.items() if k != 'auth')
         resp = RedirectResponse(f'/r/{token}' + (f'?{qs}' if qs else ''), status_code=303)
         set_identity(resp, user)
@@ -811,7 +811,7 @@ async def set_status(token: str, version_id: int, req: StatusReq, request: Reque
     a = access(token, request)
     user, review = a.need('status'), a.review
     if not user.get('v'):
-        raise HTTPException(403, 'Sign in with ShotGrid to do this')
+        raise HTTPException(403, 'Sign in with Flow to do this')
     if req.status not in {s['code'] for s in await in_thread(sg_bridge.version_statuses, review['project_id'])}:
         raise HTTPException(400, 'Unknown status')
     if a.share and not await reachable(a, [version_id]):
@@ -1530,7 +1530,7 @@ def create_or_update_review(user_id, project_id, project_name, playlist_id, vers
     """The playlist's review, or a new one for these versions, with any new versions added."""
     user = sg_bridge.get_user(user_id) if user_id else None
     if user and 'open' not in user_rights(user):
-        raise HTTPException(403, "Your ShotGrid group can't send versions to review")
+        raise HTTPException(403, "Your Flow group can't send versions to review")
     review = None
     if playlist_id:
         playlist, version_ids = sg_bridge.fetch_playlist(playlist_id)
@@ -1623,7 +1623,7 @@ async def shotgrid_webhook(request: Request):
             continue
         if kind == 'Version' and attribute == 'sg_status_list' and ev.get('new_value'):
             db.ex('UPDATE items SET sg_status=? WHERE version_id=?', (ev['new_value'], entity_id))
-            await hub.send_version(entity_id, {'type': 'status', 'version_id': entity_id, 'status': ev['new_value'], 'by': 'ShotGrid'})
+            await hub.send_version(entity_id, {'type': 'status', 'version_id': entity_id, 'status': ev['new_value'], 'by': 'Flow'})
             handled += 1
         elif kind == 'Version' and attribute in ('sg_uploaded_movie', 'sg_path_to_movie') and (db.media(entity_id) or {}).get('status', 'cleared') != 'cleared':
             await in_thread(media.enqueue, entity_id, True)  # a cleared proxy gets the new movie when it's next rebuilt

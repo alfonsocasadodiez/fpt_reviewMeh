@@ -118,7 +118,7 @@ def _write_csv(job, review, data, links):
     job['total'] = sum(len(d[1]) for d in data)
     with open(job['path'], 'w', newline='', encoding='utf-8-sig') as f:  # the BOM makes Excel read accents correctly
         w = csv.writer(f)
-        w.writerow(['Version', 'Entity', 'Task', 'Artist', 'Frames', 'Timecode', 'Type', 'Author', 'Text', 'Drawing', 'Attachments', 'Resolved', 'In ShotGrid', 'Created'])
+        w.writerow(['Version', 'Entity', 'Task', 'Artist', 'Frames', 'Timecode', 'Type', 'Author', 'Text', 'Drawing', 'Attachments', 'Resolved', 'In Flow', 'Created'])
         for it, tops, replies, notes in data:
             base = [it['version_code'], it['entity_name'], it['task_name'], it['artist_name']]
             for n in tops:
@@ -221,7 +221,7 @@ def _write_pdf(job, review, data, links):
             img = jpegs[n['id']].result()
             tags = '<span class="tag">Resolved</span>' if n['resolved'] else ''
             if n['sg_note_id'] and links:
-                tags += f' <a href="{SG_URL}/detail/Note/{n["sg_note_id"]}">ShotGrid</a>'
+                tags += f' <a href="{SG_URL}/detail/Note/{n["sg_note_id"]}">Flow</a>'
             reps = ''.join(f'<div class="rep"><b>{e(r["author_name"])} · {_when(r["created_at"])}</b>{e(r["text"])}{_files_html(job, r)}</div>' for r in replies.get(n['id'], []))
             body = (f'<div class="head"><span class="fr">{e(label)}</span>{e(tc)}<br><b>{e(n["author_name"])}</b> · {_when(n["created_at"])}{tags}</div>'
                     f'<div class="txt">{e(n["text"] or "")}</div>{_files_html(job, n)}{reps}')

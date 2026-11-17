@@ -464,7 +464,7 @@ def app_session_start():
     """→ {sessionRequestId, url}; the url is the approval page to open in the user's browser."""
     code, j = _asl('POST', '/internal_api/app_session_request', {'appName': APP_NAME, 'machineId': 'reviewmeh'})
     if code != 200 or not j or not j.get('sessionRequestId') or not j.get('url'):
-        raise RuntimeError('ShotGrid sign-in is not available')
+        raise RuntimeError('Flow sign-in is not available')
     return j
 
 
@@ -474,14 +474,14 @@ def app_session_poll(request_id):
     if code == 404:
         return None
     if code != 200 or not isinstance(j, dict):
-        raise RuntimeError('ShotGrid did not answer')
+        raise RuntimeError('Flow did not answer')
     if not j.get('approved'):
         return {'approved': False}
     conn = shotgun_api3.Shotgun(SG_URL, session_token=j['sessionToken'])
     u = conn.find_one('HumanUser', [['login', 'is', j['userLogin']], ['sg_status_list', 'is', 'act']], ['name', 'login'])
     conn.close()
     if not u:
-        raise RuntimeError('This ShotGrid account is not active')
+        raise RuntimeError('This Flow account is not active')
     return {'approved': True, 'user': {'id': u['id'], 'name': u['name'], 'login': u['login']}}
 
 
@@ -544,7 +544,7 @@ def download_movie(version_id, dest_dir):
     """Return a local path to the version's movie (path_to_movie if reachable, else upload)."""
     v = sg().find_one('Version', [['id', 'is', version_id]], ['sg_uploaded_movie', 'sg_path_to_movie'])
     if not v:
-        raise RuntimeError('Version not found in ShotGrid')
+        raise RuntimeError('Version not found in Flow')
     p = v.get('sg_path_to_movie')
     if p and os.path.isfile(p):
         return p, os.path.basename(p), False
@@ -564,7 +564,7 @@ def download_sg_mp4(version_id, dest):
     ShotGrid has none (no uploaded movie, or it hasn't finished transcoding it)."""
     v = sg().find_one('Version', [['id', 'is', version_id]], ['sg_uploaded_movie', 'sg_uploaded_movie_mp4'])
     if not v:
-        raise RuntimeError('Version not found in ShotGrid')
+        raise RuntimeError('Version not found in Flow')
     mp4 = v.get('sg_uploaded_movie_mp4')
     if isinstance(mp4, str):  # a url field can come back as the bare address
         mp4 = {'url': mp4}

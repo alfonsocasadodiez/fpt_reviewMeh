@@ -2,7 +2,7 @@
 /* ReviewMeh — player, annotations, timestamped notes, live review room.
  *
  * Playback model: everything plays as a sequence of segments (S.seq). A segment is one version;
- * the sequence is one version, a multi-selection, a mini-cut (previous/current/next shot) or the
+ * the sequence is one version, a multi-selection, a mini-cut (the shot with 1–5 shots each side) or the
  * episode cut. Review items are segments with an item_id; cut neighbours have item_id null until
  * someone comments on them (the server then adds them to the review).
  * S.frame is local to the current segment S.cur: a 0-based index into its proxy. The UI shows
@@ -28,6 +28,7 @@ const SIZES = [0.003, 0.006, 0.011, 0.018];
 const HOLDS = [[0, '1 frame'], [2, '3 frames'], [5, '6 frames'], [11, '12 frames'], [23, '24 frames'],
   [-1, 'Until next drawing'], [99999, 'Whole clip']];  // a note covers frame..frame+hold; 'io' = the In/Out range
 const ONION = ['#ff3b30', '#34c759'];  // frames before, frames after
+const MINI_MAX = 5;
 const modes = () => [['one', 'Version'], ['mini', 'Mini-cut'], ['cut', 'Cut']];
 const CMP_MODES = [['side', 'Side'], ['wipe', 'Wipe'], ['blend', 'Blend'], ['diff', 'Diff']];
 const BACKGROUNDS = [['black', 'Black'], ['grey18', '18% gray'], ['grey50', '50% gray'], ['white', 'White'], ['checker', 'Checkerboard'], ['checker-dark', 'Dark checkerboard'], ['crosshatch', 'Crosshatch']];
@@ -66,7 +67,9 @@ const ICONS = {
   clock: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
   ext: '<path d="M6 3H3v10h10v-3M9 2h5v5M14 2L7 9" fill="none" stroke="currentColor" stroke-width="1.5"/>',
   check: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  link: '<path d="M7 9a2.5 2.5 0 003.5 0l2.5-2.5a2.5 2.5 0 00-3.5-3.5l-.8.8M9 7a2.5 2.5 0 00-3.5 0L3 9.5a2.5 2.5 0 003.5 3.5l.8-.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   clip: '<path d="M13.5 7.3l-5.6 5.6a3.2 3.2 0 01-4.6-4.6l5.9-5.9a2.1 2.1 0 013 3l-5.7 5.7a1 1 0 01-1.5-1.5l5.2-5.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+  swap: '<path d="M2 5h11M10 2l3 3-3 3M14 11H3M6 8l-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.5"/>',
   rotate: '<path d="M13 8a5 5 0 11-1.5-3.5M12.5 1.5v3.2H9.3" fill="none" stroke="currentColor" stroke-width="1.5"/>',
   background: '<rect x="2.5" y="2.5" width="11" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3 3h5v5H3zM8 8h5v5H8z" fill="currentColor"/>',
   markIn: '<path d="M7 2.5H4v11h3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="10.5" cy="8" r="1.8" fill="currentColor"/>',
@@ -90,6 +93,7 @@ const S = {
   media: {}, vinfo: {}, cuts: {}, cutOfShot: {}, picks: {},          // version_id → media / info; episode cuts
   cutFilter: null,                                                   // { task, status, only }: which version of each shot plays
   mode: 'one', anchor: null, multi: new Set(),                       // anchor: version picked in the sidebar
+  miniN: Math.min(MINI_MAX, Math.max(1, Math.round(+localStorage.rt_mini || 1))),  // shots each side in Mini-cut
   seq: { kind: 'one', vids: [], segs: [], shots: null, ep: null, i: 0, total: 1 }, cur: null,
   frame: 0, playing: false, loop: localStorage.rt_loop !== '0', rate: 1, muted: false, volume: 1,
   tool: localStorage.rt_tool || 'pen', color: localStorage.rt_color || COLORS[0], size: +localStorage.rt_bsize || SIZES[+(localStorage.rt_size || 1)] || SIZES[1], opacity: +localStorage.rt_opacity || 1,
@@ -424,7 +428,7 @@ async function openMode(mode, vid = S.anchor, opts = {}) {
       const cut = await loadCut(a.entity_id);
       const idx = cut.shots.findIndex(s => s.id === a.entity_id);
       if (idx >= 0) {
-        let shots = mode === 'mini' ? cut.shots.slice(Math.max(0, idx - 1), idx + 2) : cut.shots;
+        let shots = mode === 'mini' ? cut.shots.slice(Math.max(0, idx - S.miniN), idx + S.miniN + 1) : cut.shots;
         if (mode === 'cut' && S.cutFilter?.only) shots = shots.filter(s => s.id === a.entity_id || cutMatches(s, S.cutFilter).length);
         const vids = shots.map(s => (s.id === a.entity_id ? vid : pickVersion(s, a.task_name)));
         setSeq(mode, vids, shots.findIndex(s => s.id === a.entity_id), opts.frame, { ...opts, shots, ep: cut.episode.id });
@@ -643,7 +647,6 @@ function startTick() {
   const tick = (now, md) => {
     if (!S.playing || v !== video) return;
     S.frame = timeToFrame(md ? md.mediaTime : v.currentTime);
-    if (md && diffOn()) diffPush(diffQ.a, v, S.frame);
     if (S.io && gFrame() >= S.io.b && performance.now() - (S.ioJump || 0) > 150) { ioEnd(); if (!S.playing) return; }
     onFrame();
     if ('requestVideoFrameCallback' in v) v.requestVideoFrameCallback(tick); else requestAnimationFrame(() => tick());
@@ -701,6 +704,8 @@ function onFrame() {
 // ─── layout, zoom, compare ──────────────────────────────────────────────────
 const frameSize = () => [S.cur?.width || video.videoWidth || 16, S.cur?.height || video.videoHeight || 9];
 const stageWidth = () => (S.cmp?.mode === 'side' ? stage.clientWidth / 2 : stage.clientWidth);
+// Side by side: where the main movie's half starts. Switching sides puts it on the right.
+const mainOff = () => (S.cmp?.mode === 'side' && S.cmp.swap ? stageWidth() : 0);
 // S.view.z is relative to the whole frame fitting the stage. mode keeps a fit or a size true through resizes and shot changes:
 // 'screen', 'width', 'height' or a percentage, where 100 is one movie pixel on one screen pixel. Free zoom has none.
 function zoomForMode(mode) {
@@ -719,8 +724,10 @@ function contentRect() {
   const [vw, vh] = frameSize();
   if (S.view.mode != null) S.view.z = zoomForMode(S.view.mode);
   const s = Math.min(cw / vw, H / vh) * S.view.z, w = vw * s, h = vh * s;
-  return { x: (cw - w) / 2 + S.view.x, y: (H - h) / 2 + S.view.y, w, h };
+  return { x: (cw - w) / 2 + S.view.x + mainOff(), y: (H - h) / 2 + S.view.y, w, h };
 }
+// Side by side: a zoomed movie stays inside its own half. Both halves sit at the same offset, so they clip alike.
+const halfClip = R => { const x = R.x - mainOff(); return `inset(0 ${Math.max(0, x + R.w - stageWidth())}px 0 ${Math.max(0, -x)}px)`; };
 const place = (el, R) => Object.assign(el.style, { left: `${R.x}px`, top: `${R.y}px`, width: `${R.w}px`, height: `${R.h}px` });
 
 function layout() {
@@ -731,16 +738,17 @@ function layout() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const R = contentRect(), fc = $('#frameC'), wipe = $('#wipe');
   place($('#frameA'), R);
+  $('#frameA').style.clipPath = S.cmp?.mode === 'side' ? halfClip(R) : 'none';
   fc.hidden = !S.cmp;
   wipe.hidden = S.cmp?.mode !== 'wipe';
   if (S.cmp) {
     const m = S.cmp.mode;
-    place(fc, m === 'side' ? { ...R, x: R.x + W / 2 } : R);
+    place(fc, m === 'side' ? { ...R, x: R.x + (S.cmp.swap ? -W / 2 : W / 2) } : R);
     fc.style.opacity = m === 'blend' ? S.cmp.opacity : 1;
     if (!vC.dataset.url && !diffCv.hidden) diffReset();  // nothing to compare against: no pair will come
     fc.style.mixBlendMode = m === 'diff' && diffCv.hidden ? 'difference' : 'normal';
     const g = m === 'wipe' ? wipeGeom(R) : null;
-    fc.style.clipPath = g ? g.clip : 'none';
+    fc.style.clipPath = g ? g.clip : m === 'side' ? halfClip(R) : 'none';
     if (g) {
       wipe.hidden = !g.line;
       if (g.line) {
@@ -750,6 +758,7 @@ function layout() {
       }
     }
   }
+  renderSideTag(R);
   $('#btnZoom').textContent = `${Math.round(R.w * (window.devicePixelRatio || 1) / frameSize()[0] * 100)}%`;
   $('#btnZoom').hidden = !S.cur;
   placePointer();
@@ -757,9 +766,29 @@ function layout() {
 }
 new ResizeObserver(layout).observe(stage);
 
+// Side by side: which version is in which half, under the movies, with a button to switch sides
+function renderSideTag(R) {
+  const tag = $('#sideTag');
+  tag.hidden = S.cmp?.mode !== 'side' || !S.cur;
+  if (tag.hidden) return;
+  const c = S.cmp.list.find(v => v.version_id === S.cmp.vid) || S.vinfo[S.cmp.vid];
+  const names = [`<b>${esc(S.cur.version_code || '')}</b>`, esc(c?.version_code || '—')];
+  if (S.cmp.swap) names.reverse();
+  const html = `<span>${names[0]}</span><button class="icon" id="cmpSwap">${svg(ICONS.swap)}</button><span>${names[1]}</span>`;
+  if (tag.dataset.html !== html) { tag.dataset.html = html; tag.innerHTML = html; }
+  const H = stage.clientHeight, h = tag.offsetHeight;
+  tag.style.top = `${Math.max(0, Math.min(R.y + R.h + 8, H - h - 10))}px`;
+}
+$('#sideTag').addEventListener('click', e => {
+  if (!e.target.closest('#cmpSwap')) return;
+  S.cmp.swap = !S.cmp.swap;
+  layout();
+});
+
 const ZOOM_MIN = 10, ZOOM_MAX = 800, ZOOM_SIZES = [25, 50, 100, 200, 400];
-function zoomAt(factor, cx = stage.clientWidth / 2, cy = stage.clientHeight / 2) {
-  const R = contentRect(), was = S.view.z;
+function zoomAt(factor, cx = stageWidth() / 2, cy = stage.clientHeight / 2) {
+  const R0 = contentRect(), R = { ...R0, x: R0.x - mainOff() }, was = S.view.z;  // in the half's own coordinates
+  if (cx > stageWidth()) cx -= stageWidth();  // side by side: either half zooms around the same point of its movie
   let z = clamp(was * factor, Math.min(1, zoomForMode(ZOOM_MIN)), Math.max(16, zoomForMode(ZOOM_MAX)));
   if ((was - 1) * (z - 1) < 0) z = 1;  // zooming through the whole frame stops there first
   if (z === 1) return setView('screen');
@@ -897,10 +926,11 @@ vC.addEventListener('loadedmetadata', () => { cmpSeek(); cmpSync(); });
 
 // Difference while playing. Two video elements never put their frames on screen at the same instant, however close their clocks
 // are, so blending the elements shows changes that are not there. Instead each frame is copied as it is shown, with its frame
-// number, and only two frames with the same number are drawn. Paused, both elements sit on one frame and the plain blend is exact.
+// number, and only two frames with the same number are drawn. Scrubbing has the same problem, as the two seeks land at different
+// times, so this runs whenever Difference is on. Without requestVideoFrameCallback the elements are blended directly.
 const diffCv = $('#diffC'), diffCtx = diffCv.getContext('2d'), DIFF_KEEP = 6;
 const diffQ = { a: [], c: [] }, diffSpare = [];
-const diffOn = () => S.playing && S.cmp?.mode === 'diff' && 'requestVideoFrameCallback' in vC;
+const diffOn = () => S.cmp?.mode === 'diff' && 'requestVideoFrameCallback' in vC;
 function diffReset() {
   diffQ.a.length = diffQ.c.length = diffSpare.length = 0;
   diffCv.hidden = true;
@@ -916,8 +946,8 @@ function diffPush(q, v, n) {
   q.push({ n, cv, src: v.currentSrc });
   diffDraw();
 }
-// Play was pressed with both videos resting on the same frame: show that pair at once, so the two elements are never seen
-// unpaired while the compare video gets going.
+// Both videos rest on the same frame (play pressed, Difference picked): show that pair at once, so the two elements are never
+// seen unpaired before the next frames arrive.
 function diffSeed() {
   if (S.cmp?.mode !== 'diff' || !('requestVideoFrameCallback' in vC) || !vC.dataset.url) return;
   if (video.seeking || vC.seeking || video.readyState < 2 || vC.readyState < 2) return;
@@ -941,6 +971,13 @@ function diffDraw() {
     if (diffCv.hidden) { diffCv.hidden = false; $('#frameC').style.mixBlendMode = 'normal'; }
     return;
   }
+}
+for (const v of VIDS) if ('requestVideoFrameCallback' in v) {
+  const shown = (now, md) => {
+    if (v === video && diffOn()) diffPush(diffQ.a, v, timeToFrame(md.mediaTime));
+    v.requestVideoFrameCallback(shown);
+  };
+  v.requestVideoFrameCallback(shown);
 }
 if ('requestVideoFrameCallback' in vC) {
   const shown = (now, md) => {
@@ -979,7 +1016,7 @@ $('#cmpBar').addEventListener('click', e => {
   if (!b) return;
   if (b.id === 'cmpClose') return closeCompare();
   if (b.id === 'cmpRot') return setWipeAngle(Math.floor((S.cmp.wipeA || 0) / 45) * 45 + 45);
-  if (b.dataset.cmode) { S.cmp.mode = localStorage.rt_cmp = b.dataset.cmode; renderCompareBar(); layout(); }
+  if (b.dataset.cmode) { S.cmp.mode = localStorage.rt_cmp = b.dataset.cmode; renderCompareBar(); layout(); diffSeed(); }
 });
 // The wipe is a line at any angle: the far side shows the compare version. wipe 0..1 slides it across the frame.
 function wipeGeom(R) {
@@ -1053,6 +1090,8 @@ function renderOverlay() {
   ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
   if (!S.cur || S.cur.media_status !== 'ready') return;
   const R = contentRect(), f = S.frame;
+  ctx.save();
+  if (S.cmp?.mode === 'side') { ctx.beginPath(); ctx.rect(mainOff(), 0, stageWidth(), stage.clientHeight); ctx.clip(); }  // drawings belong to the main movie
   if (S.showDrawings) {
     const N = S.onion ? S.onionN : 0;
     for (let d = N; d >= 1; d--) {
@@ -1087,6 +1126,7 @@ function renderOverlay() {
     ctx.save(); ctx.beginPath(); ctx.arc(S.hover[0], S.hover[1], eraserRadius(R), 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
   }
+  ctx.restore();
 }
 
 // ─── pointer: draw, select / move / resize, pan ─────────────────────────────
@@ -1809,10 +1849,10 @@ $('#itemList').addEventListener('contextmenu', e => {
   const label = (one, many) => (n > 1 ? `${many} <span class="muted">${n}</span>` : one);
   const entries = [];
   if (can('status')) entries.push({ html: label('Set status', 'Set status'), run: () => statusMenu(x, y, its.map(i => i.version_id), n === 1 ? it.sg_status : null) });
-  if (can('publish')) entries.push({ html: label('Publish to SG', 'Publish to SG'), run: () => openPublish(its.map(i => i.id)) });
+  if (can('publish')) entries.push({ html: label('Publish to Flow', 'Publish to Flow'), run: () => openPublish(its.map(i => i.id)) });
   if (can('download')) entries.push({ html: label('Export…', 'Export…'), run: () => openExport(its.map(i => i.id)) });
   entries.push({ html: label('Copy name', 'Copy names'), run: () => navigator.clipboard.writeText(its.map(i => i.version_code).join('\n')).then(() => toast('Copied')) });
-  if (n === 1) entries.push({ html: 'Open in ShotGrid', run: () => window.open(`${SG_URL}/detail/Version/${it.version_id}`, '_blank', 'noopener') });
+  if (n === 1) entries.push({ html: 'Open in Flow', run: () => window.open(`${SG_URL}/detail/Version/${it.version_id}`, '_blank', 'noopener') });
   if (can('add')) entries.push({ html: label('Reprocess', 'Reprocess'), run: () => reprocessItems(its) });
   if (can('add')) entries.push({ html: label('Remove from review', 'Remove from review'), run: () => removeItems(its) });
   openMenu(x, y, entries, { below: true });
@@ -1847,9 +1887,13 @@ function renderHeader() {
     <span class="spacer"></span>
     ${(!can('versions') || !S.cutLabel) && S.seq.kind !== 'multi' ? '' : S.seq.kind === 'multi'
       ? `<div class="seg"><button class="active">${S.seq.segs.length} selected</button><button id="btnExitMulti" title="Clear selection">×</button></div>`
-      : `<div class="seg" id="modeSeg">${modes().map(([k, l]) => `<button data-mode="${k}" class="${S.mode === k ? 'active' : ''}" ${k !== 'one' && anchor?.entity_type !== 'Shot' ? 'disabled' : ''}>${esc(l)}</button>`).join('')}</div>`}
+      : `<div class="seg" id="modeSeg">${modes().map(([k, l]) => {
+        const btn = `<button data-mode="${k}" class="${S.mode === k ? 'active' : ''}" ${k !== 'one' && anchor?.entity_type !== 'Shot' ? 'disabled' : ''}>${esc(l)}${k === 'mini' && S.mode === 'mini' ? ` ±${S.miniN}` : ''}</button>`;
+        if (k !== 'mini' || S.mode !== 'mini') return btn;
+        return `<button id="miniLess" data-mini="-1" ${S.miniN <= 1 ? 'disabled' : ''}>−</button>${btn}<button id="miniMore" data-mini="1" ${S.miniN >= MINI_MAX ? 'disabled' : ''}>+</button>`;
+      }).join('')}</div>`}
     ${can('versions') ? `<button id="btnCompare" class="${S.cmp ? 'active' : ''}" ${it.entity_id ? '' : 'disabled'}>Compare</button>` : ''}
-    <a class="iconlink" href="${SG_URL}/detail/Version/${it.version_id}" target="_blank" rel="noopener" title="Open in ShotGrid">${svg(ICONS.ext)}</a>
+    <a class="iconlink" href="${SG_URL}/detail/Version/${it.version_id}" target="_blank" rel="noopener" title="Open in Flow">${svg(ICONS.ext)}</a>
     <span class="panels">${PANELS.slice(1).map(panelBtn).join('')}</span>`;
 }
 // Collapsible areas: versions, header, drawing tools, notes (\ toggles all)
@@ -1867,6 +1911,7 @@ $('#itemHeader').addEventListener('click', async e => {
   if (!b) return;
   if (b.dataset.panel) return togglePanel(b.dataset.panel);
   if (b.dataset.mode) { local(); openMode(b.dataset.mode); }
+  if (b.dataset.mini) { S.miniN = localStorage.rt_mini = clamp(S.miniN + +b.dataset.mini, 1, MINI_MAX); local(); openMode('mini'); }
   if (b.id === 'btnExitMulti') openMode(S.mode);
   if (b.id === 'btnCompare') S.cmp ? closeCompare() : openCompare();
   if (b.id === 'statusBtn' && S.cur) { const r = b.getBoundingClientRect(); statusMenu(r.left, r.bottom + 4, [S.cur.version_id], S.cur.sg_status); }
@@ -1878,7 +1923,7 @@ function statusMenu(x, y, vids, current) {
   openMenu(x, y, S.statuses.map(s => ({ html: `<span class="sdot" style="--c:${s.color}"></span>${esc(s.name)}`, on: s.code === current, run: () => setStatus(vids, s) })), { below: true });
 }
 async function setStatus(vids, st) {
-  if (vids.length > 1 && !confirm(`Set ${vids.length} versions to ${st.name} in ShotGrid?`)) return;
+  if (vids.length > 1 && !confirm(`Set ${vids.length} versions to ${st.name} in Flow?`)) return;
   const res = await Promise.allSettled(vids.map(v => api(`/versions/${v}/status`, { method: 'POST', body: { status: st.code } })));
   vids.forEach((v, i) => { if (res[i].status === 'fulfilled') applyStatus(v, st.code); });
   const failed = res.filter(r => r.status === 'rejected');
@@ -1899,12 +1944,14 @@ function renderStageMsg() {
   if (it.media_status === 'ready') { m.hidden = true; return; }
   m.hidden = false;
   if (it.media_status === 'error') m.innerHTML = `<div>⚠ ${esc(it.media_error || 'Ingest failed')}</div>`;
-  else if (it.media_status === 'nomedia') m.innerHTML = '<div>No movie in ShotGrid</div>';
+  else if (it.media_status === 'nomedia') m.innerHTML = '<div>No movie in Flow</div>';
   else m.innerHTML = `<div>${esc(shortName(it))}</div><div class="progress"><div style="width:${(it.media_progress || 0) * 100}%"></div></div>`;
 }
 
 // ─── notes panel ────────────────────────────────────────────────────────────
 const IMG_NAME = /\.(png|jpe?g|gif|webp)$/i;
+const sgNoteUrl = id => `${SG_URL}/detail/Note/${id}`;
+const copyUrl = url => navigator.clipboard.writeText(url).then(() => toast('Link copied'), () => prompt('Link', url));
 function noteFilesHTML(n) {
   if (!n.files?.length) return '';
   return `<div class="nfiles">${n.files.map(f => {
@@ -1915,14 +1962,15 @@ function noteFilesHTML(n) {
   }).join('')}</div>`;
 }
 function noteHTML(n, isReply = false) {
-  const sg = n.sg_note_id ? `<a class="sgok" href="${SG_URL}/detail/Note/${n.sg_note_id}" target="_blank" rel="noopener" title="In ShotGrid">${svg(ICONS.check)}</a>`
-    : n.sg_reply_id ? `<span class="sgok" title="In ShotGrid">${svg(ICONS.check)}</span>` : '';
+  const sg = n.sg_note_id ? `<a class="sgok" href="${sgNoteUrl(n.sg_note_id)}" target="_blank" rel="noopener" title="In Flow">${svg(ICONS.check)}</a>`
+    : n.sg_reply_id ? `<span class="sgok" title="In Flow">${svg(ICONS.check)}</span>` : '';
   const edited = (n.sg_note_id || n.sg_reply_id) && n.synced_at && n.updated_at > n.synced_at + 1 ? '<span class="sgedit" title="Edited after publishing">edited</span>' : '';
   const actions = [];
   if (!n.local) {
     if (!isReply) actions.push('<a data-act="reply">Reply</a>', `<a data-act="resolve">${n.resolved ? 'Reopen' : 'Resolve'}</a>`);
     if (isMine(n)) actions.push('<a data-act="edit">Edit</a>', '<a data-act="delete">Delete</a>');
     if (!isReply) actions.push(...can('download') ? ['<a data-act="png" title="Annotated frame">PNG</a>'] : [], '<a data-act="link" title="Copy link">Link</a>');
+    if (!isReply && n.sg_note_id) actions.push('<a data-act="sglink" title="Copy the link to this note in Flow">Flow link</a>');
   }
   return `<div class="head">${avatar(n.author_name, 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span>
       ${!isReply ? `<span class="chip">${noteLabel(n)}</span>` : ''}
@@ -1976,10 +2024,10 @@ $('#noteList').addEventListener('click', async e => {
     if (act === 'edit') { startEdit(target); return; }
     if (act === 'png') { window.open(`${API}/frame/${top.item_id}/${top.frame}.png?note=${top.id}`, '_blank'); return; }
     if (act === 'link') {
-      const url = `${location.origin}/r/${TOKEN}?item=${top.item_id}&note=${top.id}`;
-      await navigator.clipboard.writeText(url).then(() => toast('Link copied'), () => prompt('Link', url));
+      await copyUrl(`${location.origin}/r/${TOKEN}?item=${top.item_id}&note=${top.id}`);
       return;
     }
+    if (act === 'sglink') { await copyUrl(sgNoteUrl(top.sg_note_id)); return; }
   } catch (err) { toast(err.message, true); return; }
   local();
   if (S.playing) video.pause();
@@ -2075,6 +2123,7 @@ async function loadShotNotes() {
   } catch (e) { S.sgNotes[key] = { list: c?.list || [], at: Date.now() }; toast(e.message, true); }
   if (S.rtab === 'shot') renderShotNotes();
 }
+const sgCopy = id => (id ? `<button class="icon sgcopy" data-copy="${esc(sgNoteUrl(id))}" title="Copy Flow link">${svg(ICONS.link)}</button>` : '');
 // This review's notes plus ShotGrid's own, one group per version, newest version first
 function renderShotNotes() {
   const el = $('#shotList'), cur = S.cur;
@@ -2087,13 +2136,13 @@ function renderShotNotes() {
     const seg = { ...it, fps: S.media[it.version_id]?.fps, frame_count: S.media[it.version_id]?.frame_count };
     const replies = S.notes.filter(x => x.parent_id === n.id && !x.deleted);
     group(it.version_id, it.version_code).cards.push(`<div class="snote" data-vid="${it.version_id}" data-frame="${n.frame}" data-note="${n.id}">
-      <div class="head">${avatar(n.author_name, 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span><span class="chip">${rangeLabel(n.frame, noteEnd(n, seg), seg)}</span><span class="t">${ago(n.created_at)}</span></div>
+      <div class="head">${avatar(n.author_name, 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span><span class="chip">${rangeLabel(n.frame, noteEnd(n, seg), seg)}</span><span class="t">${ago(n.created_at)}</span>${sgCopy(n.sg_note_id)}</div>
       <div class="txt">${esc(n.text || '')}</div>${noteFilesHTML(n)}${n.shapes?.length && can('download') && S.media[it.version_id]?.status === 'ready' ? `<img class="sthumb" loading="lazy" alt="" src="${API}/frame/${it.id}/${n.frame}.png?note=${n.id}&u=${Math.round(n.updated_at)}" onerror="this.remove()">` : ''}${replies.map(r => `<div class="rep">${esc(r.author_name)}: ${esc(r.text)}</div>`).join('')}</div>`);
   }
   for (const n of S.sgNotes[`${cur.entity_type}:${cur.entity_id}`]?.list || []) {
     if (inReview.has(n.id)) continue;
     group(n.version_id, n.version_code).cards.push(`<div class="snote" data-sg="${n.id}" ${n.version_id ? `data-vid="${n.version_id}"` : ''}>
-      <div class="head">${avatar(n.author_name || '?', 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span><span class="t">${ago(n.created_at)}</span></div>
+      <div class="head">${avatar(n.author_name || '?', 'sm', n.author_id)}<span class="who">${esc(n.author_name)}</span><span class="t">${ago(n.created_at)}</span>${sgCopy(n.id)}</div>
       <div class="txt">${esc(n.text)}</div>${n.images.map(id => `<img class="sthumb" loading="lazy" alt="" src="${API}/attachment/${id}" onerror="this.remove()">`).join('')}${n.replies.map(r => `<div class="rep">${esc(r)}</div>`).join('')}</div>`);
   }
   const html = [...groups.values()].sort((a, b) => (b.vid ?? -1) - (a.vid ?? -1)).map(g => `<div class="sgroup${g.vid === cur.version_id ? ' cur' : ''}">
@@ -2102,11 +2151,13 @@ function renderShotNotes() {
 }
 $('#shotList').addEventListener('click', e => {
   if (e.target.closest('.nfiles')) return;
+  const cp = e.target.closest('[data-copy]');
+  if (cp) return copyUrl(cp.dataset.copy);
   if (e.target.matches('.sthumb')) return window.open(e.target.src, '_blank', 'noopener');
   const t = e.target.closest('.snote, .shead');
   if (!t) return;
   const { vid, frame, note, sg } = t.dataset;
-  if (!vid) { if (sg) window.open(`${SG_URL}/detail/Note/${sg}`, '_blank', 'noopener'); return; }
+  if (!vid) { if (sg) window.open(sgNoteUrl(sg), '_blank', 'noopener'); return; }
   gotoVersion(+vid, frame == null ? undefined : +frame, note ? +note : undefined, sg);
 });
 function gotoVersion(vid, frame, note, sgNote) {
@@ -2704,7 +2755,7 @@ async function ensureIdentity() {
     S.modalResolve = v => resolve(!!v);
     S.modalLocked = true;
     openModal(`<h2>Who's reviewing?</h2>
-      <button class="primary big" id="btnSG">Sign in with ShotGrid</button>
+      <button class="primary big" id="btnSG">Sign in with Flow</button>
       <div class="or">or</div>
       <div class="row"><input type="text" id="guestName" placeholder="Your name" style="flex:1"><button id="btnGuest">Join as guest</button></div>`);
     const done = async user => {
@@ -2725,8 +2776,8 @@ async function ensureIdentity() {
     };
     $('#btnSG').addEventListener('click', async e => {
       const b = e.currentTarget;
-      b.disabled = true; b.textContent = 'Waiting for ShotGrid…';
-      try { await done(await signInWithShotGrid()); } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Sign in with ShotGrid'; }
+      b.disabled = true; b.textContent = 'Waiting for Flow…';
+      try { await done(await signInWithShotGrid()); } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Sign in with Flow'; }
     });
     $('#btnGuest').addEventListener('click', guest);
     $('#guestName').addEventListener('keydown', e => { if (e.key === 'Enter') guest(); });
@@ -2809,7 +2860,7 @@ async function openPublish(selected = null) {
   const pend = id => itemNoteRows(id).filter(pending).length;
   const curId = S.cur?.item_id, total = S.items.reduce((a, i) => a + pend(i.id), 0);
   let scope = selected ? 'sel' : curId && pend(curId) ? 'cur' : 'all';
-  openModal(`<h2>Publish to SG</h2>
+  openModal(`<h2>Publish to Flow</h2>
     <div class="seg wide" id="pubScope">
       ${selected ? `<button data-s="sel">Selected <b>${selected.reduce((a, i) => a + pend(i), 0)}</b></button>` : ''}
       <button data-s="cur" ${curId ? '' : 'disabled'}>This version <b>${curId ? pend(curId) : 0}</b></button>
@@ -2909,7 +2960,7 @@ function handleWS(m) {
       S.notes = m.notes; S.items = sortItems(m.items);
       rebuildSegs();
       renderAll();
-      if (m.by !== S.me?.name) toast(`${m.by} published to ShotGrid`);
+      if (m.by !== S.me?.name) toast(`${m.by} published to Flow`);
       break;
     case 'present':
       if (S.presenting) { S.presenting = false; renderPresence(); toast(`${m.name} is presenting`); }
@@ -3020,7 +3071,7 @@ async function openShare() {
     if (!el) return;
     el.hidden = !rows.length;
     el.innerHTML = rows.map(r => {
-      const who = !r.guests ? 'ShotGrid users' : `Guests: ${GUEST_ROWS.filter(([k]) => r.perms[k]).map(([, l]) => l).join(', ') || 'Watch'}${r.has_password ? ' · Password' : ''}`;
+      const who = !r.guests ? 'Flow users' : `Guests: ${GUEST_ROWS.filter(([k]) => r.perms[k]).map(([, l]) => l).join(', ') || 'Watch'}${r.has_password ? ' · Password' : ''}`;
       return `<div class="opt share" data-id="${r.id}"><span class="mono muted">${left(r.expires_at)}</span>
         <span class="grow" title="${esc(`${who} · ${r.created_by_name || ''}`)}">${esc(who)}</span>
         <button data-copy="${esc(r.url)}">Copy</button><button data-revoke="${r.id}">Revoke</button></div>`;
@@ -3150,10 +3201,10 @@ const TIPS = {
   btnClearIO: ['Clear In / Out', 'Esc', 'Play the whole sequence again.'],
   'rtab:notes': ['Notes', '', 'Notes on the version on screen.'],
   'rtab:shot': ['Shot notes', '', 'Every note on this shot, across its versions. Click one to open that version.'],
-  'rtab:details': ['Details', '', 'ShotGrid fields of the version on screen.'],
+  'rtab:details': ['Details', '', 'Flow fields of the version on screen.'],
   btnFields: ['Choose fields', '', 'Add or remove fields. Your list is kept in this browser.'],
   leftGrip: ['Resize', '', 'Drag to resize. Double-click to reset.'], rightGrip: ['Resize', '', 'Drag to resize. Double-click to reset.'],
-  btnCopyStudio: ['Studio link', '', 'For the studio: opens after signing in with ShotGrid, with the rights of their group.'],
+  btnCopyStudio: ['Studio link', '', 'For the studio: opens after signing in with Flow, with the rights of their group.'],
   btnNewShare: ['Create link', '', 'Makes a new link and copies it. It stops working when it expires.'],
   shDays: ['Expires in', '', `1 to ${APP.share_max_days} days.`],
   btnFull: ['Fullscreen', 'F', ''],
@@ -3161,20 +3212,22 @@ const TIPS = {
   btnSort: ['Sort versions', '', 'Sort this list by a Version field or a field of what it links to. Only your view changes.'],
   btnShare: ['Share', '', 'Copy the studio link, or create a link to this review that expires.'],
   btnTour: ['Guided tour', '', 'A short walk through the tool.'],
-  shGuests: ['Allow guests', '', 'Off: only people signed in with ShotGrid can open the link, with their group\'s rights. On: anyone with the link, with the rights ticked below.'],
+  shGuests: ['Allow guests', '', 'Off: only people signed in with Flow can open the link, with their group\'s rights. On: anyone with the link, with the rights ticked below.'],
   shPass: ['Guest password', '', 'Optional. Guests need it as well as the link, in case the link leaks. It can\'t be shown again.'],
   shG_comment: ['Comment', '', 'Guests can post notes and drawings.'],
-  shG_attach: ['Attach files', '', `Guests can add files to their notes, up to ${APP.max_guest_upload_mb} MB each. They go to ShotGrid when the notes are published.`],
-  btnAttach: ['Attach files', '', 'Add files to this note, or drop them on the panel or paste a picture. They go to ShotGrid with it.'],
+  shG_attach: ['Attach files', '', `Guests can add files to their notes, up to ${APP.max_guest_upload_mb} MB each. They go to Flow when the notes are published.`],
+  btnAttach: ['Attach files', '', 'Add files to this note, or drop them on the panel or paste a picture. They go to Flow with it.'],
   shG_download: ['Download', '', 'Guests can save the movie and frames. Off still streams the video.'],
   shG_versions: ['Other versions', '', 'Guests can use Mini-cut, the whole cut and Compare. Off: only the versions in this review.'],
-  shG_details: ['Details', '', 'Guests can read basic ShotGrid fields of the version.'],
+  shG_details: ['Details', '', 'Guests can read basic Flow fields of the version.'],
   btnPresent: ['Present', '', 'Everyone in the review follows your playback, frame by frame, and sees your pointer.'],
   btnPointers: ['Pointers', '', 'Show or hide the pointers of the others on this version. Only for you. The presenter you follow always shows.'],
-  btnPublish: ['Publish to SG', '', 'Send unpublished notes to ShotGrid as Notes, with the annotated frames attached.'],
-  statusBtn: ['Status', '', 'Changes the version status in ShotGrid straight away.'],
+  btnPublish: ['Publish to Flow', '', 'Send unpublished notes to Flow as Notes, with the annotated frames attached.'],
+  statusBtn: ['Status', '', 'Changes the version status in Flow straight away.'],
   'mode:one': ['Version', '', 'Play this version on its own.'],
-  'mode:mini': ['Mini-cut', '', 'Play it between the previous and the next shot of the cut.'],
+  miniLess: ['Fewer shots', '', 'One shot fewer before and after this one in the Mini-cut.'],
+  miniMore: ['More shots', '', 'One more shot before and after this one in the Mini-cut.'],
+  'mode:mini': ['Mini-cut', '', 'Play it between the shots around it in the cut. − and + change how many.'],
   'mode:cut': ['Cut', '', 'Play every shot in cut order. The rows above the timeline switch task per shot.'],
   btnCompare: ['Compare', '', 'Show another version of this shot next to it. It follows you from shot to shot.'],
   btnExitMulti: ['Clear selection', '', ''],
@@ -3245,16 +3298,16 @@ async function signInGate() {
   const g = await api(`/api/gate/${encodeURIComponent(TOKEN)}`).catch(() => ({}));
   return new Promise(resolve => {
     S.modalLocked = true;
-    openModal(`<h2>Sign in</h2><button class="primary big" id="btnSG">Sign in with ShotGrid</button>
+    openModal(`<h2>Sign in</h2><button class="primary big" id="btnSG">Sign in with Flow</button>
       ${g.password ? `<div class="or">or</div>
         <div class="row"><input type="text" id="guestName" placeholder="Your name" style="flex:1"></div>
         <div class="row"><input type="password" id="guestPass" placeholder="Password" autocomplete="off" style="flex:1"><button id="btnGuest">Join as guest</button></div>` : ''}`);
     const done = () => { S.modalLocked = false; closeModal(); resolve(); };
     $('#btnSG').addEventListener('click', async e => {
       const b = e.currentTarget;
-      b.disabled = true; b.textContent = 'Waiting for ShotGrid…';
+      b.disabled = true; b.textContent = 'Waiting for Flow…';
       try { S.me = await signInWithShotGrid(); done(); }
-      catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Sign in with ShotGrid'; }
+      catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Sign in with Flow'; }
     });
     if (!g.password) return;
     const join = async () => {

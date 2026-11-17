@@ -42,7 +42,7 @@ def vdir(version_id):
 
 QUALITIES = [{'crf': 28, 'name': 'Draft'}, {'crf': 23, 'name': 'Standard'}, {'crf': 18, 'name': 'High'}, {'crf': 12, 'name': 'Highest'}]
 MAX_WIDTHS = [1280, 1920, 2560, 3840]
-SOURCES = [{'key': 'shotgrid', 'name': "Use ShotGrid's MP4"}, {'key': 'transcode', 'name': 'Transcode the uploaded movie'}]
+SOURCES = [{'key': 'shotgrid', 'name': "Use Flow's MP4"}, {'key': 'transcode', 'name': 'Transcode the uploaded movie'}]
 
 
 def transcode_settings():
