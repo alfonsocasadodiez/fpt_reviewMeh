@@ -24,6 +24,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -71,11 +72,11 @@ async def in_thread(fn, *args):
 
 class Hub:
     def __init__(self):
-        self.rooms = {}  # review id -> {cid: {'ws', 'user', 'item_id', 'presenting', 'access'}}
+        self.rooms = {}  # review id -> {cid: {'ws', 'user', 'item_id', 'presenting', 'control', 'access'}}
 
     def presence(self, token):
-        return [{'cid': cid, 'name': c['user']['name'], 'id': c['user'].get('id'),
-                 'item_id': c['item_id'], 'presenting': c['presenting']}
+        return [{'cid': cid, 'name': c['user']['name'], 'id': c['user'].get('id'), 'key': user_key(c['user']),
+                 'item_id': c['item_id'], 'presenting': c['presenting'], **({'control': c['control']} if c['presenting'] else {})}
                 for cid, c in self.rooms.get(token, {}).items()]
 
     async def send(self, token, msg, exclude=None):
@@ -1666,6 +1667,13 @@ async def shotgrid_webhook(request: Request):
 
 # ─── websocket ────────────────────────────────────────────────────────────────
 
+def present_control(v):
+    """Who may steer the presenter's playback: 'all', or a list of user keys (empty = only the presenter)."""
+    if v is None or v == 'all':
+        return 'all'
+    return [k for k in v if isinstance(k, str)][:200] if isinstance(v, list) else 'all'
+
+
 @app.websocket('/ws/{token}')
 async def ws_endpoint(ws: WebSocket, token: str):
     try:
@@ -1681,7 +1689,7 @@ async def ws_endpoint(ws: WebSocket, token: str):
     cid = secrets.token_hex(4)
     rid = a.room
     room = hub.rooms.setdefault(rid, {})
-    room[cid] = {'ws': ws, 'user': user, 'item_id': None, 'presenting': False, 'access': a}
+    room[cid] = {'ws': ws, 'user': user, 'item_id': None, 'presenting': False, 'control': 'all', 'access': a}
     await ws.send_text(json.dumps({'type': 'welcome', 'cid': cid}))
     await hub.send(rid, {'type': 'presence', 'users': hub.presence(rid)})
     try:
@@ -1698,13 +1706,27 @@ async def ws_endpoint(ws: WebSocket, token: str):
                 c['item_id'] = msg.get('item_id')
                 await hub.send(rid, {'type': 'presence', 'users': hub.presence(rid)})
             elif t == 'present' and 'present' in a.perms:
-                if not c['presenting']:
-                    for other in room.values():
-                        other['presenting'] = False
-                    c['presenting'] = True
+                control = present_control(msg.get('control'))
+                if not c['presenting'] or control != c['control']:
+                    if not c['presenting']:
+                        for other in room.values():
+                            other['presenting'] = False
+                    c['presenting'], c['control'] = True, control
                     await hub.send(rid, {'type': 'presence', 'users': hub.presence(rid)})
                 await hub.send(rid, {'type': 'present', 'from': cid, 'name': user['name'],
                                      'state': msg.get('state')}, exclude=cid)
+            elif t == 'control':  # someone the presenter lets steer moves the room's playback; the presenter adopts it too
+                pid, p = next(((k, o) for k, o in room.items() if o['presenting']), (None, None))
+                if p and pid != cid and (p['control'] == 'all' or user_key(user) in p['control']):
+                    await hub.send(rid, {'type': 'control', 'from': pid, 'by': user['name'], 'state': msg.get('state')}, exclude=cid)
+            elif t == 'laser':  # ephemeral trace in frame coordinates, for everyone on the same version
+                pts = msg.get('pts')
+                pts = [[round(float(x), 4), round(float(y), 4)] for x, y in pts[:64]] if isinstance(pts, list) else []
+                if pts:
+                    c = msg.get('c')
+                    await hub.send(rid, {'type': 'laser', 'from': cid, 'name': user['name'], 'v': int(msg.get('v') or 0),
+                                         'c': c if isinstance(c, str) and re.fullmatch(r'#[0-9a-fA-F]{6}', c) else None,
+                                         'start': bool(msg.get('start')), 'pts': pts}, exclude=cid)
             elif t == 'present_stop':
                 c['presenting'] = False
                 await hub.send(rid, {'type': 'present_stop', 'from': cid})

@@ -66,6 +66,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 #followBanner { display: flex; gap: 6px; align-items: center; }
 #followBanner button { padding: 3px 10px; }
 #followBanner.on button { background: var(--ok); border-color: var(--ok); color: #fff; }
+#followBanner .muted { font-size: 12px; }
 #btnPresent.active { background: var(--ok); border-color: var(--ok); }
 #btnPointers[hidden] { display: none; }
 #btnPointers:not(.on) { color: var(--muted); text-decoration: line-through; }
@@ -295,6 +296,7 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 4px; }
 #menu .mi { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; white-space: nowrap; }
 #menu .mi:hover { background: var(--panel2); }
 #menu .mi.on { color: var(--accent2); }
+#menu .ctick { display: inline-block; width: 12px; }
 #menu { max-height: 70vh; overflow-y: auto; }
 #menu .mi .muted { margin-left: auto; padding-left: 12px; }
 
@@ -359,7 +361,8 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 4px; }
 #modal .list .opt.share .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* links without comment rights */
-body.no-comment #composer, body.no-comment #toolbar > :not(.spacer):not(:last-child), body.no-comment #btnHold,
+body.no-comment #composer, body.no-comment #toolbar > :not(.spacer):not(:last-child):not(#tools), body.no-comment #btnHold,
+body.no-comment #tools > :not([data-tool="none"]):not([data-tool="laser"]),
 body.no-comment #notesPanel .reply-box,
 body.no-comment .note [data-act="reply"], body.no-comment .note [data-act="resolve"] { display: none !important; }
 

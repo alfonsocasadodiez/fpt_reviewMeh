@@ -44,6 +44,7 @@ const ICONS = {
   ellipse: '<ellipse cx="8" cy="8" rx="6" ry="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>',
   text: '<path d="M3 3h10M8 3v10" stroke="currentColor" stroke-width="2"/>',
   eraser: '<path d="M2 11l6-7 6 5-4 4H5z M6 13h8" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+  laser: '<path d="M2.5 13.5l6.5-6.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="11" cy="5" r="2.2" fill="currentColor"/><path d="M11 .8v1.2M15.2 5H14M14 2l-.9.9M7.8 2l.9.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
   first: '<path d="M3 3v10M13 3L5 8l8 5z" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
   last: '<path d="M13 3v10M3 3l8 5-8 5z" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
   back: '<path d="M4 3v10M14 3L6 8l8 5z" fill="currentColor" stroke="currentColor" stroke-width="1.2"/>',
@@ -80,7 +81,7 @@ const ICONS = {
     [`panel${k}`, `<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="${d}" fill="currentColor"/>`])),
 };
 const TOOLS = [['none', 'Select (V)', 'v'], ['brush', 'Brush (B)', 'b'], ['pen', 'Marker (P)', 'p'], ['line', 'Line (N)', 'n'], ['arrow', 'Arrow (A)', 'a'],
-  ['rect', 'Rectangle (R)', 'r'], ['ellipse', 'Ellipse (C)', 'c'], ['text', 'Text (T)', 't'], ['eraser', 'Eraser (E)', 'e']];
+  ['rect', 'Rectangle (R)', 'r'], ['ellipse', 'Ellipse (C)', 'c'], ['text', 'Text (T)', 't'], ['eraser', 'Eraser (E)', 'e'], ['laser', 'Laser (X)', 'x']];
 for (const [id, k] of [['btnFirst', 'first'], ['btnLast', 'last'], ['btnBack', 'back'], ['btnFwd', 'fwd'], ['btnPrevNote', 'prevNote'],
   ['btnNextNote', 'nextNote'], ['btnPlay', 'play'], ['btnLoop', 'loop'], ['btnMute', 'sound'], ['btnExport', 'export'], ['btnFull', 'full'],
   ['btnUndo', 'undo'], ['btnRedo', 'redo'], ['btnClear', 'clear'], ['btnAttach', 'clip'], ['btnIn', 'markIn'], ['btnOut', 'markOut'], ['btnClearIO', 'clearIO'], ['btnOnion', 'onion'], ['btnHold', 'hold'], ['btnDrawings', 'eye'], ['btnBg', 'background']]) document.getElementById(id).innerHTML = svg(ICONS[k]);
@@ -104,7 +105,7 @@ const S = {
   store: loadStore(), outbox: loadOutbox(), hist: {}, active: null, pick: null, selected: null, editing: null, hover: null,
   view: { z: 1, x: 0, y: 0, mode: 'screen' }, tl: { z: 1, x: 0 }, cmp: null, evCache: {},
   hide: JSON.parse(localStorage.rt_hide || '{}'),
-  filter: 'all', presence: [], cid: null, presenting: false, following: null, optedOut: null,
+  filter: 'all', presence: [], cid: null, presenting: false, following: null, optedOut: null, control: 'all', steering: false, steerAt: 0,
   remoteDrafts: {}, lastFrame: {}, replyOpen: null, uploads: [], noteSel: new Set(), noteFrom: null, details: {}, detailDefs: {}, sgNotes: {}, fieldDefs: null, linkOpen: new Set(), linkRows: {},
 };
 
@@ -308,7 +309,7 @@ function applyAccess() {
   $('#rtabShot').hidden = !shotTab();
   if (S.rtab === 'details' && !can('details')) S.rtab = 'notes';
   if (S.rtab === 'shot' && !shotTab()) S.rtab = 'notes';
-  if (!can('comment') && S.tool !== 'none') setTool('none');
+  if (!can('comment') && S.tool !== 'none' && S.tool !== 'laser') setTool('none');
 }
 for (const v of [...VIDS, vC]) v.addEventListener('contextmenu', e => { if (!can('download')) e.preventDefault(); });
 
@@ -1129,7 +1130,73 @@ function renderOverlay() {
     ctx.save(); ctx.beginPath(); ctx.arc(S.hover[0], S.hover[1], eraserRadius(R), 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
   }
+  drawLasers(R);
   ctx.restore();
+}
+
+// ─── laser: traces everyone on the same version sees, gone after a second. Never saved ──
+// The trail shrinks from its tail as points age, and fades out once the pointer stops
+const LASER_LIFE = 1000;
+S.lasers = {};  // 'me' or a cid → { name, c, v, cur, strokes: [[[x, y, t], …], …] }, points oldest first
+let laserOn = false, laserBuf = [], laserStart = false, laserTimer = null, laserRAF = 0;
+function laserAdd(key, name, c, v, pts, start) {
+  const L = S.lasers[key] ||= { name, v, cur: null, strokes: [] }, now = performance.now();
+  if (start || !L.cur || L.v !== v) { L.cur = []; L.strokes.push(L.cur); }
+  L.v = v; L.c = c || `hsl(${hue(name)} 95% 58%)`;
+  pts.forEach(([x, y], i) => L.cur.push([x, y, now - (pts.length - 1 - i) * 40 / pts.length]));  // a batch spans ~40ms
+  if (!laserRAF) laserRAF = requestAnimationFrame(laserTick);
+}
+function laserTick() {
+  laserRAF = 0;
+  const old = performance.now() - LASER_LIFE;
+  for (const [k, L] of Object.entries(S.lasers)) {
+    for (const s of L.strokes) while (s.length > 1 && s[0][2] <= old) s.shift();
+    L.strokes = L.strokes.filter(s => s.length && s.at(-1)[2] > old);
+    if (!L.strokes.length) delete S.lasers[k];
+  }
+  renderOverlay();
+  if (Object.keys(S.lasers).length) laserRAF = requestAnimationFrame(laserTick);
+}
+// One smooth curve per stroke: quadratic segments through the midpoints, so no joints or dots show
+function laserPath(s, R) {
+  const P = s.map(([x, y]) => [R.x + x * R.w, R.y + y * R.h]);
+  ctx.beginPath();
+  ctx.moveTo(...P[0]);
+  if (P.length === 1) { ctx.lineTo(P[0][0] + 0.01, P[0][1]); return; }
+  for (let i = 1; i < P.length - 1; i++) ctx.quadraticCurveTo(P[i][0], P[i][1], (P[i][0] + P[i + 1][0]) / 2, (P[i][1] + P[i + 1][1]) / 2);
+  ctx.lineTo(...P.at(-1));
+}
+function drawLasers(R) {
+  const now = performance.now();
+  ctx.save();
+  ctx.lineCap = ctx.lineJoin = 'round';
+  for (const L of Object.values(S.lasers)) {
+    if (L.v !== S.cur.version_id) continue;
+    for (const s of L.strokes) {
+      const a = Math.min(1, 3 * (1 - (now - s.at(-1)[2]) / LASER_LIFE));  // full while moving, fades over the last third
+      if (a <= 0) continue;
+      laserPath(s, R);
+      ctx.globalAlpha = a;
+      ctx.shadowColor = ctx.strokeStyle = L.c; ctx.shadowBlur = 12; ctx.lineWidth = 5;
+      ctx.stroke();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1.6;  // bright core
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function laserFlush() {
+  clearTimeout(laserTimer); laserTimer = null;
+  if (laserBuf.length) wsSend({ type: 'laser', v: S.cur?.version_id, c: S.color, start: laserStart, pts: laserBuf.splice(0) });
+  laserStart = false;
+}
+function laserPoint(e, start) {
+  const p = toNorm(e).map(round4), last = S.lasers.me?.cur?.at(-1), R = contentRect();
+  if (!start && last && Math.hypot((p[0] - last[0]) * R.w, (p[1] - last[1]) * R.h) < 2) return;  // dense points only add wobble
+  laserAdd('me', S.me?.name || '', S.color, S.cur.version_id, [p], start);
+  if (start) { laserFlush(); laserStart = true; }
+  laserBuf.push(p);
+  if (!laserTimer) laserTimer = setTimeout(laserFlush, 40);
 }
 
 // ─── pointer: draw, select / move / resize, pan ─────────────────────────────
@@ -1161,6 +1228,7 @@ canvas.addEventListener('pointerdown', e => {
   if (S.cur?.media_status !== 'ready') return;
   if (e.button === 1) { e.preventDefault(); startPan(e, false); return; }
   if (e.button !== 0) return;
+  if (S.tool === 'laser') { canvas.setPointerCapture(e.pointerId); laserOn = true; laserPoint(e, true); return; }  // pointing never stops playback
   const p = toNorm(e), t = pickedTarget(e);
   if (t) { beginDrawing(); canvas.setPointerCapture(e.pointerId); drag = { kind: t.k ? 'resize' : 'move', k: t.k, p0: p, orig: frameDraft()[S.pick], moved: false }; return; }
   if (S.tool === 'none' || !can('comment')) { selectDown(e, p); return; }
@@ -1198,6 +1266,7 @@ function selectDown(e, p) {
 function startPan(e, click) { canvas.setPointerCapture(e.pointerId); drag = { kind: 'pan', x0: e.clientX, y0: e.clientY, v0: { ...S.view }, moved: false, click }; }
 
 canvas.addEventListener('pointermove', e => {
+  if (laserOn) { for (const ev of e.getCoalescedEvents?.() || [e]) laserPoint(ev, false); return; }
   if (drag?.kind === 'move' || drag?.kind === 'resize') {
     const p = toNorm(e);
     if (!drag.moved) { checkpoint(); drag.moved = true; }
@@ -1238,6 +1307,7 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerleave', () => { if (S.hover) { S.hover = null; renderOverlay(); } });
 
 function endPointer() {
+  if (laserOn) { laserOn = false; laserFlush(); return; }
   const d = drag;
   drag = null;
   if (S.erasing) { if (!S.erasing.changed) hist().u.pop(); S.erasing = null; return; }
@@ -1528,6 +1598,7 @@ new ResizeObserver(() => renderTimeline()).observe($('#track'));
     tip.hidden = false;
     tip.style.left = `${e.clientX - r.left}px`;
     tip.textContent = `${S.seq.segs.length > 1 ? `${shortName(s)} ` : ''}${fmtF(f, s)}`;
+    if (mode?.kind === 'scrub' || mode?.kind === 'io') local();  // keeps steering the room for the whole drag
     if (mode?.kind === 'scrub') goSeg(i, f);
     if (mode?.kind === 'io') { setIO(Math.min(mode.a, g), Math.max(mode.a, g)); goSeg(i, f); }
     if (mode?.kind === 'range') applyRange(mode, g);
@@ -2503,7 +2574,7 @@ function renderToolbar() {
 function setTool(t) { S.tool = localStorage.rt_tool = t; if (t !== 'none') S.pick = null; S.hover = null; canvas.style.cursor = ''; renderToolbar(); renderOverlay(); }
 function setColor(c) {
   S.color = localStorage.rt_color = c;
-  if (!editPicked(s => ({ ...s, c })) && (S.tool === 'none' || S.tool === 'eraser')) setTool('pen');
+  if (!editPicked(s => ({ ...s, c })) && (S.tool === 'none' || S.tool === 'eraser')) setTool('pen');  // the laser keeps its tool and takes the colour
   renderToolbar();
 }
 const opacityProp = () => (S.opacity < 1 ? { o: S.opacity } : {});
@@ -2590,8 +2661,9 @@ on('#btnLast', () => { if (S.playing) video.pause(); seek(nFrames() - 1); });
 on('#btnPrevNote', () => jumpNote(-1));
 on('#btnNextNote', () => jumpNote(1));
 on('#btnLoop', () => { S.loop = !S.loop; localStorage.rt_loop = S.loop ? '1' : '0'; applyAudio(); preloadNext(); $('#btnLoop').classList.toggle('active', S.loop); });
-on('#btnMute', () => { S.muted = !S.muted; applyAudio(); $('#btnMute').innerHTML = svg(S.muted ? ICONS.muted : ICONS.sound); });
-on('#btnFull', () => { document.fullscreenElement ? document.exitFullscreen() : $('#viewer').requestFullscreen(); });
+// sound and fullscreen are each person's own: they never stop following or steer the room
+$('#btnMute').addEventListener('click', () => { S.muted = !S.muted; applyAudio(); $('#btnMute').innerHTML = svg(S.muted ? ICONS.muted : ICONS.sound); });
+$('#btnFull').addEventListener('click', () => { document.fullscreenElement ? document.exitFullscreen() : $('#viewer').requestFullscreen(); });
 $('#btnExport').addEventListener('click', e => {
   if (!ready()) return;
   const n = topNotes().find(x => x.id === S.selected && x.frame === S.frame), r = e.currentTarget.getBoundingClientRect();
@@ -2677,7 +2749,7 @@ $('#frameInput').classList.toggle('tc', S.tcMode);
 // ─── keyboard ───────────────────────────────────────────────────────────────
 const KEYS = [['Space / K', 'Play / pause'], ['← →', 'Previous / next frame (Shift ×10)'], ['↑ ↓', 'Previous / next note'],
   ['Home / End', 'First / last frame'], ['[ ]', 'Previous / next version'], ['I / O · Shift-drag timeline', 'In / Out'], ['Esc', 'Clear In / Out and selection'],
-  ['V B P N A R C T E', 'Select, brush, marker, line, arrow, rectangle, ellipse, text, eraser'], ['1–9', 'Colour'],
+  ['V B P N A R C T E X', 'Select, brush, marker, line, arrow, rectangle, ellipse, text, eraser, laser'], ['1–9', 'Colour'],
   ['Shift + drag', 'Square / circle · keep proportions'], ['Double-click text', 'Edit text'], ['Delete', 'Delete selected shape'],
   ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'], ['Ctrl+X / C / V · right-click', 'Cut, copy, paste a drawing to another frame'], ['U', 'Onion skin'], ['G', 'Hold until next drawing'], ['H', 'Show drawings'],
   ['Wheel · + − 0', 'Zoom · fit'], ['Wheel on timeline', 'Zoom timeline (Shift pans)'], ['Middle-drag', 'Pan'],
@@ -2970,9 +3042,13 @@ function handleWS(m) {
       if (S.presenting) { S.presenting = false; renderPresence(); toast(`${m.name} is presenting`); }
       if (S.optedOut === m.from) break;
       S.following = m.from;
-      applyPresent(m.state);
+      if (!justSteered()) applyPresent(m.state);
       renderPresence();
       break;
+    case 'control':  // someone allowed to steer moved the playback: the presenter adopts it, followers follow it
+      if (S.presenting || (S.following === m.from && !justSteered())) applyPresent(m.state);
+      break;
+    case 'laser': laserAdd(m.from, m.name, m.c, m.v, m.pts, m.start); break;
     case 'present_stop':
       if (S.following === m.from) S.following = null;
       if (S.optedOut === m.from) S.optedOut = null;
@@ -2993,6 +3069,7 @@ const presentState = () => ({ kind: S.seq.kind, vids: S.seq.vids, shot: S.seq.sh
 
 async function applyPresent(st) {
   if (!st?.vids?.length) return;
+  S.steering = false;  // what follows from applying it is the room's, not ours to send back
   S.cutFilter = st.cutFilter ?? null;
   if (st.vids.join() !== S.seq.vids.join()) {
     let shots = null, ep = null;
@@ -3012,27 +3089,42 @@ async function applyPresent(st) {
     else if (Math.abs(S.frame - st.frame) > 3) video.currentTime = (st.frame + 0.5) / fps();
   } else {
     if (!video.paused) video.pause();
-    seek(st.frame, { broadcast: false });
+    if (st.frame !== S.frame) seek(st.frame, { broadcast: false });  // the heartbeat of a paused room costs nothing
   }
 }
 
-// any local transport action while following = stop following (re-follow from the banner)
+// Who may steer the presenter's playback: everyone by default, or the people the presenter picks. Volume is always your own
+const presenterNow = () => S.presence.find(p => p.presenting && p.cid !== S.cid);
+const myKey = () => S.presence.find(p => p.cid === S.cid)?.key;
+function canSteer() {
+  const p = presenterNow();
+  return !!p && S.following === p.cid && (p.control === 'all' || (p.control || []).includes(myKey()));
+}
+// Our own move wins over the room's states for a moment: they may still be the ones from before it
+const justSteered = () => S.steering && performance.now() - S.steerAt < 600;
+
+// any local transport action while following: steer the room when allowed, else stop following (re-follow from the banner)
 function local() {
   if (!S.following) return;
+  if (canSteer()) { S.steering = true; S.steerAt = performance.now(); return; }
   S.optedOut = S.following;
   S.following = null;
   renderPresence(); placePointer();
 }
 
-function broadcastPresent() { if (S.presenting && S.cur) wsSend({ type: 'present', state: presentState() }); }
+function broadcastPresent() {
+  if (!S.cur) return;
+  if (S.presenting) wsSend({ type: 'present', state: presentState(), control: S.control });
+  else if (S.steering && canSteer()) { S.steerAt = performance.now(); wsSend({ type: 'control', state: presentState() }); }
+}
 let lastPresent = 0, presentTimer = null;
 function broadcastPresentThrottled() {
-  if (!S.presenting) return;
+  if (!S.presenting && !S.steering) return;
   clearTimeout(presentTimer);
   const now = Date.now();
   if (now - lastPresent > 80) { lastPresent = now; broadcastPresent(); } else presentTimer = setTimeout(broadcastPresent, 90);
 }
-setInterval(() => { if (S.presenting && S.playing) broadcastPresent(); }, 1000);
+setInterval(() => { if (S.presenting) broadcastPresent(); }, 1000);  // keeps anyone who just joined, or missed a move, in step
 function broadcastDraft() {
   if (S.presenting && S.cur) wsSend({ type: 'draft', version_id: S.cur.version_id, frame: S.frame, shapes: frameDraft() });
 }
@@ -3138,10 +3230,31 @@ $('#btnPointers').addEventListener('click', () => {
 $('#btnPresent').addEventListener('click', async () => {
   if (!S.me && !await ensureIdentity()) return;
   S.presenting = !S.presenting;
-  if (S.presenting) { S.following = null; S.optedOut = null; broadcastPresent(); broadcastDraft(); }
+  if (S.presenting) { S.following = null; S.optedOut = null; S.control = 'all'; broadcastPresent(); broadcastDraft(); }
   else wsSend({ type: 'present_stop' });
   renderPresence();
 });
+
+// Presenter only: who else may play, pause and scrub for the room during this presentation
+$('#btnControl').addEventListener('click', e => openControlMenu(e.currentTarget.getBoundingClientRect()));
+function openControlMenu(r) {
+  const people = [...new Map(S.presence.filter(p => p.key && p.key !== myKey()).map(p => [p.key, p])).values()];
+  const tick = on => `<span class="ctick">${on ? '✓' : ''}</span>`;
+  const set = c => { S.control = c; broadcastPresent(); renderPresence(); };
+  openMenu(r.left, r.bottom + 4, [
+    { html: `${tick(S.control === 'all')}Everyone`, on: S.control === 'all', run: () => set('all') },
+    { html: `${tick(Array.isArray(S.control) && !S.control.length)}Only me`, on: Array.isArray(S.control) && !S.control.length, run: () => set([]) },
+    { html: `<span class="muted">${people.length ? 'Or pick people' : 'Pick people: no one else is here yet'}</span>`, run: () => openControlMenu(r) },
+    ...people.map(p => {
+      const picked = Array.isArray(S.control) && S.control.includes(p.key);
+      return { html: `${tick(picked)}${avatar(p.name, 'sm', p.id)} ${esc(p.name)}`, on: picked, run: () => {
+        const keys = Array.isArray(S.control) ? S.control.filter(k => k !== p.key) : [];
+        set(picked ? keys : [...keys, p.key]);
+        openControlMenu(r);  // stays open to pick several
+      } };
+    }),
+  ], { below: true });
+}
 
 function renderPresence() {
   $('#presence').innerHTML = S.presence.map(p => {
@@ -3152,12 +3265,15 @@ function renderPresence() {
   $('#btnPointers').hidden = !roomPresenting();
   $('#btnPointers').classList.toggle('on', S.showPointers);
   $('#btnPresent').textContent = S.presenting ? 'Presenting' : 'Present';
-  const b = $('#followBanner'), presenter = S.presence.find(p => p.presenting && p.cid !== S.cid);
+  $('#btnControl').hidden = !S.presenting;
+  $('#btnControl').textContent = S.control === 'all' ? 'Everyone controls' : S.control.length
+    ? `You + ${S.control.length === 1 ? (S.presence.find(p => p.key === S.control[0])?.name || '1 person') : `${S.control.length} people`} control` : 'Only you control';
+  const b = $('#followBanner'), presenter = presenterNow();
   if (presenter) {
     const following = S.following === presenter.cid;
     b.hidden = false;
     b.classList.toggle('on', following);
-    b.innerHTML = `${avatar(presenter.name, 'sm', presenter.id)} <button>${following ? 'Following' : 'Follow'}</button>`;
+    b.innerHTML = `${avatar(presenter.name, 'sm', presenter.id)} <button>${following ? 'Following' : 'Follow'}</button>${following && canSteer() ? '<span class="muted">You can control playback</span>' : ''}`;
     b.querySelector('button').onclick = () => {
       if (following) { S.optedOut = S.following; S.following = null; } else { S.following = presenter.cid; S.optedOut = null; }
       renderPresence(); placePointer();
@@ -3176,6 +3292,7 @@ const TIPS = {
   'tool:ellipse': ['Ellipse', 'C', 'Hold Shift for a circle.'],
   'tool:text': ['Text', 'T', 'Click on the frame and type. Double-click text to change it.'],
   'tool:eraser': ['Eraser', 'E', 'Rubs out the part of a stroke it touches. Lines, shapes and text go whole. The size buttons set its width.'],
+  'tool:laser': ['Laser', 'X', 'Point things out while you talk. Everyone on this version sees the trail in your colour for a second, then it fades. Nothing is saved and playback keeps going.'],
   color: ['Colour', '1–9', 'Colour for new drawings, or for the selected one.'],
   slot: ['Custom colour', '', 'Click to use it. Double-click to change it.'],
   slotEmpty: ['Custom colour', '', 'Click to save a colour of your own here.'],
@@ -3224,7 +3341,8 @@ const TIPS = {
   shG_download: ['Download', '', 'Guests can save the movie and frames. Off still streams the video.'],
   shG_versions: ['Other versions', '', 'Guests can use Mini-cut, the whole cut and Compare. Off: only the versions in this review.'],
   shG_details: ['Details', '', 'Guests can read basic Flow fields of the version.'],
-  btnPresent: ['Present', '', 'Everyone in the review follows your playback, frame by frame, and sees your pointer.'],
+  btnPresent: ['Present', '', 'Everyone in the review follows your playback, frame by frame, and sees your pointer. Everyone following can also play, pause and scrub for the room. Volume stays each person\'s own.'],
+  btnControl: ['Who controls playback', '', 'Everyone, only you, or the people you tick in the list. Only for this presentation.'],
   btnPointers: ['Pointers', '', 'Show or hide the pointers of the others on this version. Only for you. The presenter you follow always shows.'],
   btnPublish: ['Publish to Flow', '', 'Send unpublished notes to Flow as Notes, with the annotated frames attached.'],
   statusBtn: ['Status', '', 'Changes the version status in Flow straight away.'],
